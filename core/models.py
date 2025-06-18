@@ -123,11 +123,13 @@ POOLS: Dict[str, Pool] = {}
 ENGINE_METRICS = {
     EngineType.VLLM: {
         "waiting_queue": "vllm:num_requests_waiting",
-        "cache_usage": "vllm:gpu_cache_usage_perc"
+        "cache_usage": "vllm:gpu_cache_usage_perc",
+        "running_req": "vllm:num_requests_running"
     },
     EngineType.SGLANG: {
         "waiting_queue": "sglang:num_queue_reqs", 
-        "cache_usage": "sglang:token_usage"
+        "cache_usage": "sglang:token_usage",
+        "running_req": "sglang:num_running_reqs"
     }
 }
 
