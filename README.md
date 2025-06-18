@@ -496,24 +496,28 @@ Through API interfaces you can view:
    - Check F5 device network connectivity: `ping <f5_host>`
    - Verify username and password are correct
    - Confirm F5 device has iControl REST functionality enabled
-   - Check if F5 device ports are open (usually 443 or 8443)
-
+   - Check if the user is locked as multi time failure logins
+   - Change log level to debug to see detail
+   
 2. **Metrics Collection Failure**
    - Check if inference engine services are running normally
    - Verify Metrics interface configuration is correct
    - Confirm network firewall settings allow access
    - Check inference engine's Metrics port and path
-
+   - Change log level to debug to see detail
+   
 3. **Score Calculation Anomaly**
    - Check if algorithm mode configuration is correct
    - Verify weight parameter settings (w_a + w_b recommended to equal 1)
    - Review Metrics data completeness
    - Confirm inference engine type configuration is correct
-
+   - Change log level to debug to see detail
+   
 4. **Pool Member Fetch Failure**
    - Verify Pool name and Partition match F5 configuration
    - Check Pool status on F5 device
    - Confirm F5 client connection and authentication are normal
+   - Change log level to debug to see detail
 
 ### Debug Mode
 
