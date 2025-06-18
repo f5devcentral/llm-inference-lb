@@ -156,9 +156,7 @@ none
 **Common scenarios when unable to select**:
 - Pool does not exist in the scheduler
 - No intersection between requested member list and actual Pool members
-- All candidate members have Score values of 0
 - No members in the Pool
-- Metrics data collection failure preventing Score calculation
 
 ### 2. Get Single Pool Status
 
