@@ -1,0 +1,75 @@
+# F5 LLM Inference Gateway Scheduler Configuration File
+global:
+  # Scheduler checks for configuration changes at this interval in seconds. The program will automatically hot reload.
+  interval: 5
+  # Scheduler API port for F5 sideband connection. Changing the port requires program restart.
+  api_port: 8080
+  # Scheduler API listening address for F5 sideband connection. Changing the address requires program restart.
+  # 0.0.0.0: Listen on all network interfaces (default)
+  # 127.0.0.1: Listen only on local loopback interface
+  # Specific IP: Listen on specified network interface
+  api_host: 0.0.0.0
+  # Log level configuration (recommend using log_level)
+  # Available values: DEBUG, INFO, WARNING, ERROR, CRITICAL
+  # DEBUG: Show all level logs
+  # INFO: Show INFO, WARNING, ERROR, CRITICAL level logs  
+  # WARNING: Show only WARNING, ERROR, CRITICAL level logs
+  # ERROR: Show only ERROR, CRITICAL level logs
+  # CRITICAL: Show only CRITICAL level logs
+  log_level: debug
+  # Backward compatibility debug switch (used when log_level is not configured)
+  # log_debug: True
+
+f5:
+  host: 127.0.0.1
+  port: 8443
+  username: admin
+  # Environment variable for password, program needs to read environment variable and replace the value here
+  password_env: F5_PASSWORD
+
+scheduler:
+  # Unit: seconds. This value should not be less than (metrics extraction timeout + 2) seconds, and should be as large as possible to avoid frequent F5 access.
+  # Large intervals prevent the scheduler from timely learning about pool member changes, using old member information, but this doesn't affect F5 normal operation.
+  # F5 will query the scheduler for the best node with the latest actual healthy member information, and the scheduler will select the best node based on the valid member information provided.
+  # After F5 adds a new member, the scheduler won't calculate the new member's weight before the interval arrives, the scheduler will still select from old members. This gives the new member natural warm-up time.
+  # After F5 removes a member, the scheduler still has the old member information before the interval arrives, but since it only looks for the best node among valid members provided from F5 sideband connection, the scheduler won't return the old member.
+  pool_fetch_interval: 10
+  # Unit: milliseconds. This value should maintain certain interval difference with fetch_interval to avoid conflicts between metrics collection objects and pool fetch objects (though uncommon).
+  # Multiple pools use parallel collection, this value is the interval time for each round of collection. The actual maximum time for each round of collection is [this value + metrics collection timeout (default 3s)].
+  # It's recommended to consult the inference engine administrator to understand the inference engine's own metrics update frequency. The corresponding matching setting (metrics_fetch_interval) should be appropriately smaller than the inference engine's metrics update frequency.
+  metrics_fetch_interval: 3000
+
+modes:
+  - name: s1
+    # Weight configuration, w_a+w_b=1, w_a is the weight of waiting queue, w_b is the weight of cache
+    w_a: 0.5
+    w_b: 0.5
+  # Currently only s1 algorithm mode is supported, s2 mode is reserved
+  #- name: s2
+  #  w_a: 0.5
+  #  w_b: 0.1
+  #  w_g: 0.4
+    
+pools:
+  - name: example_pool1
+    partition: Common
+    engine_type: vllm
+    metrics:
+      schema: http
+      #port: 30000
+      path: /metrics
+      timeout: 4  # HTTP request timeout (seconds)
+      APIkey: abcdefdfdsfds
+      metric_user: user1
+      metric_pwd_env: METRIC_PWD
+  - name: example_pool2
+    partition: Common
+    engine_type: sglang
+    metrics:
+      schema: http
+      #port: 30001
+      path: /metrics
+      timeout: 4  # HTTP request timeout (seconds)
+      APIkey: abcdef
+      metric_user: user1
+      metric_pwd_env: METRIC_PWD
