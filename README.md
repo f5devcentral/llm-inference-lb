@@ -337,7 +337,7 @@ none
 |-------------|------|----------|---------|-------------|
 | `host` | String | **Yes** | None | F5 device IP address or hostname |
 | `port` | Integer | No | 443 | F5 iControl REST API port |
-| `username` | String | No | "admin" | F5 device login username |
+| `username` | String | No | "admin" | F5 device login username. The guest role or high. |
 | `password_env` | String | No | None | Environment variable name for F5 password |
 
 ### Scheduler Configuration (scheduler)
