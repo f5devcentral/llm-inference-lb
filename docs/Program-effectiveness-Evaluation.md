@@ -116,7 +116,7 @@ The output result is similar to the following:
   ...
 ```
 
-## 3. 如果你是中文用户，还可以使用如下脚本进行更直观的评测
+## 3. If you are Chinese users，还可以使用如下脚本进行更直观的评测
 
 执行`tests/test_probability_analysis.py`程序，出现如下提示，选择1可以不需要llm-mock-api的运行，如选择2则需要llm-mock-api运行。
 
