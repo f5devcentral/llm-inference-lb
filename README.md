@@ -1,4 +1,4 @@
-[[中文Readme]](./docs/README-zh.md) [[模块关系-中文]](./docs/模块关系-zh.md)
+[[中文Readme]](./docs/README-zh.md) [[模块关系-中文]](./docs/模块关系-zh.md) [[Modules relationships]](./docs/Module-Relationships.md) [[程序有效性评估-中文]](./docs/Program-effectiveness-Evaluation-zh.md) [[Program effectiveness evaluation-EN]](Program-effectiveness-Evaluation.md)
 
 # F5 LLM Inference Gateway Scheduler
 
