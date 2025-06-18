@@ -582,12 +582,6 @@ def _s2_algorithm(self, member: PoolMember, mode: ModeConfig) -> float:
     pass
 ```
 
-### 添加新的API接口
-
-1. 在 `api/server.py` 中添加新的路由处理函数
-2. 在 `core/scheduler.py` 中实现相应的业务逻辑
-3. 更新API文档
-
 ## 许可证
 
 本项目为内部使用，请遵守相关使用条款。 

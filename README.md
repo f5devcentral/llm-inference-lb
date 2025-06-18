@@ -590,12 +590,6 @@ def _s2_algorithm(self, member: PoolMember, mode: ModeConfig) -> float:
     pass
 ```
 
-### Adding New API Interfaces
-
-1. Add new route handler functions in `api/server.py`
-2. Implement corresponding business logic in `core/scheduler.py`
-3. Update API documentation
-
 ## License
 
 This project is for internal use, please comply with relevant usage terms. 
