@@ -140,6 +140,7 @@ class MetricsCollector:
             
             waiting_queue_metric = key_metrics.get("waiting_queue", "")
             cache_usage_metric = key_metrics.get("cache_usage", "")
+            running_req_metric = key_metrics.get("running_req", "")
             
             if not waiting_queue_metric or not cache_usage_metric:
                 self.logger.warning(f"Key metrics not defined for engine type {engine_type}")
@@ -154,6 +155,12 @@ class MetricsCollector:
             cache_values = self._extract_metric_values(metrics_text, cache_usage_metric)
             if cache_values:
                 metrics["cache_usage"] = self._calculate_average(cache_values)
+            
+            # Parse running requests metric (for S2 algorithm)
+            if running_req_metric:
+                running_values = self._extract_metric_values(metrics_text, running_req_metric)
+                if running_values:
+                    metrics["running_req"] = self._calculate_average(running_values)
             
             self.logger.debug(f"Parsed metrics: {metrics}")
             return metrics

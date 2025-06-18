@@ -14,12 +14,14 @@ DYNAMIC_UPDATE_ENABLED = True
 # initial metrics value
 metrics = {
     "num_requests_waiting": 12.0,
-    "gpu_cache_usage_perc": 0.1
+    "gpu_cache_usage_perc": 0.1,
+    "num_requests_running": 5.0
 }
 
 def update_metrics_once():
     metrics["num_requests_waiting"] = round(random.uniform(5.0, 2000.0), 1)
     metrics["gpu_cache_usage_perc"] = round(random.uniform(0.0, 1.0), 2)
+    metrics["num_requests_running"] = round(random.uniform(0.0, 500.0), 1)
 # Regually change metrics value according the time sleep
 # Or actively change metrics value if triggered by the API  /trigger_update
 def update_metrics():
@@ -44,6 +46,9 @@ vllm:num_requests_waiting{{model_name="xxx"}} {metrics["num_requests_waiting"]}
 # HELP vllm:gpu_cache_usage_perc GPU KV-cache usage.
 # TYPE vllm:gpu_cache_usage_perc gauge
 vllm:gpu_cache_usage_perc{{model_name="xxx"}} {metrics["gpu_cache_usage_perc"]}
+# HELP vllm:num_requests_running Number of requests currently running.
+# TYPE vllm:num_requests_running gauge
+vllm:num_requests_running{{model_name="xxx"}} {metrics["num_requests_running"]}
 """.strip()
     return Response(content=content, media_type="text/plain")
 

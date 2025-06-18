@@ -351,10 +351,10 @@ none
 
 | Config Item | Type | Required | Default | Description |
 |-------------|------|----------|---------|-------------|
-| `name` | String | No | "s1" | Algorithm mode name (currently only supports s1) |
+| `name` | String | No | "s1" | Algorithm mode name (supports s1 and s2) |
 | `w_a` | Float | No | 0.5 | Waiting queue weight (between 0-1) |
 | `w_b` | Float | No | 0.5 | Cache usage weight (between 0-1) |
-| `w_g` | Float | No | 0.0 | Reserved weight (currently unused) |
+| `w_g` | Float | No | 0.0 | Running requests weight (used in S2 algorithm) |
 
 ### Pool Configuration (pools)
 
@@ -397,9 +397,15 @@ scheduler:
   metrics_fetch_interval: 3000
 
 modes:
-  - name: s1
-    w_a: 0.8 # In practice, w_a has greater impact on TTFT
-    w_b: 0.2
+#Currently support s1 and s2. s1 use 2 metrics, s2 use 3 metrics
+#You need test of them to see which one is better in your environment
+  #- name: s1
+    #w_a: 0.8 # In practice, w_a has greater impact on TTFT
+    #w_b: 0.2
+  - name: s2
+    w_a: 0.4 # Weight for waiting queue metric
+    w_b: 0.3 # Weight for cache usage metric  
+    w_g: 0.3 # Weight for running requests metric
 
 pools:
   - name: llm-pool-1           # Required: Pool name
@@ -440,6 +446,23 @@ Where:
 
 Higher Score values indicate better member performance with higher selection probability.
 
+### S2 Algorithm
+
+Score calculation formula:
+```
+score = w_a × (1 - normalized_waiting_queue) + w_b × (1 - cache_usage) + w_g × (1 - normalized_running_req)
+```
+
+Where:
+- `w_a`: Waiting queue weight
+- `w_b`: Cache usage weight
+- `w_g`: Running requests weight
+- `normalized_waiting_queue`: Normalized waiting queue length (0-1)
+- `cache_usage`: GPU cache usage ratio (0-1)
+- `normalized_running_req`: Normalized running requests count (0-1)
+
+The S2 algorithm extends S1 by adding a third metric: running requests. This provides more granular control over load balancing by considering not just queued requests but also currently processing requests. Usually w_a + w_b + w_g = 1 for optimal results.
+
 ### Weighted Random Selection
 
 Weighted random selection based on each member's Score value:
@@ -453,10 +476,12 @@ Weighted random selection based on each member's Score value:
 **vLLM Engine**:
 - `vllm:num_requests_waiting`: Number of requests waiting in queue
 - `vllm:gpu_cache_usage_perc`: GPU cache usage percentage
+- `vllm:num_requests_running`: Number of requests currently running (for S2 algorithm)
 
 **SGLang Engine**:
 - `sglang:num_queue_reqs`: Number of requests in queue
 - `sglang:token_usage`: Token cache usage rate
+- `sglang:num_running_reqs`: Number of requests currently running (for S2 algorithm)
 
 ## Runtime Monitoring
 
@@ -574,20 +599,41 @@ ENGINE_METRICS = {
 
 ### Implementing New Scheduling Algorithms
 
+The project now supports two algorithms: S1 and S2. To implement additional algorithms:
+
 1. Add new mode in configuration:
 ```yaml
 modes:
-  - name: s2
-    w_a: 0.4
+  - name: s3
+    w_a: 0.3
     w_b: 0.3
-    w_g: 0.3
+    w_g: 0.2
+    w_h: 0.2  # Add new weight parameters as needed
 ```
 
-2. Implement algorithm logic in `core/score_calculator.py`:
+2. Add metrics support in `core/models.py` if new metrics are needed:
 ```python
-def _s2_algorithm(self, member: PoolMember, mode: ModeConfig) -> float:
-    # Implement S2 algorithm
+ENGINE_METRICS = {
+    EngineType.VLLM: {
+        "waiting_queue": "vllm:num_requests_waiting",
+        "cache_usage": "vllm:gpu_cache_usage_perc",
+        "running_req": "vllm:num_requests_running",
+        "new_metric": "vllm:new_metric_name"  # Add new metric
+    }
+}
+```
+
+3. Implement algorithm logic in `core/score_calculator.py`:
+```python
+def _calculate_s3_scores(self, pool: Pool, mode_config: ModeConfig) -> None:
+    # Implement S3 algorithm
     pass
+```
+
+4. Update the main calculation method to support the new algorithm:
+```python
+elif mode_config.name == "s3":
+    self._calculate_s3_scores(pool, mode_config)
 ```
 
 ## License

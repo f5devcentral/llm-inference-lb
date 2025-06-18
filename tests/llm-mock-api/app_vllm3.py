@@ -12,13 +12,16 @@ DYNAMIC_UPDATE_ENABLED = True
 # 初始指标值（可动态更新）
 metrics = {
     "num_requests_waiting": 2000.0,
-    "gpu_cache_usage_perc": 0.6
+    "gpu_cache_usage_perc": 0.6,
+    "num_requests_running": 7.0
 }
 
 def update_metrics_once():
     """执行单次指标更新"""
     metrics["num_requests_waiting"] = round(random.uniform(2000.0, 5000.0), 1)
     metrics["gpu_cache_usage_perc"] = round(random.uniform(0.6, 1.0), 2)
+    metrics["num_requests_running"] = round(random.uniform(1000.0, 3000.0), 1)
+
 # 后台线程：每隔 1~10 秒更新一次指标值
 def update_metrics():
     while True:
@@ -41,6 +44,9 @@ vllm:num_requests_waiting{{model_name="xxx"}} {metrics["num_requests_waiting"]}
 # HELP vllm:gpu_cache_usage_perc GPU KV-cache usage.
 # TYPE vllm:gpu_cache_usage_perc gauge
 vllm:gpu_cache_usage_perc{{model_name="xxx"}} {metrics["gpu_cache_usage_perc"]}
+# HELP vllm:num_requests_running Number of requests currently running.
+# TYPE vllm:num_requests_running gauge
+vllm:num_requests_running{{model_name="xxx"}} {metrics["num_requests_running"]}
 """.strip()
     return Response(content=content, media_type="text/plain")
 

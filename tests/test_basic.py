@@ -28,21 +28,26 @@ async def test_score_calculation():
     ]
     
     # Set test metrics
-    members[0].metrics = {"waiting_queue": 5.0, "cache_usage": 0.3}
-    members[1].metrics = {"waiting_queue": 2.0, "cache_usage": 0.6}
-    members[2].metrics = {"waiting_queue": 8.0, "cache_usage": 0.1}
+    members[0].metrics = {"waiting_queue": 5.0, "cache_usage": 0.3, "running_req": 2.0}
+    members[1].metrics = {"waiting_queue": 2.0, "cache_usage": 0.6, "running_req": 4.0}
+    members[2].metrics = {"waiting_queue": 8.0, "cache_usage": 0.1, "running_req": 1.0}
     
     pool = Pool("test-pool", "Common", EngineType.VLLM, members)
     
-    # Create algorithm configuration
-    mode_config = ModeConfig(name="s1", w_a=0.3, w_b=0.7)
-    
-    # Calculate scores
+    # Test S1 algorithm
+    mode_config_s1 = ModeConfig(name="s1", w_a=0.3, w_b=0.7)
     calculator = ScoreCalculator()
-    calculator.calculate_pool_scores(pool, mode_config)
+    calculator.calculate_pool_scores(pool, mode_config_s1)
     
-    # Output results
-    print("Score calculation results:")
+    print("S1 algorithm results:")
+    for member in members:
+        print(f"  {member}: score={member.score:.3f}, metrics={member.metrics}")
+    
+    # Test S2 algorithm
+    mode_config_s2 = ModeConfig(name="s2", w_a=0.3, w_b=0.4, w_g=0.3)
+    calculator.calculate_pool_scores(pool, mode_config_s2)
+    
+    print("S2 algorithm results:")
     for member in members:
         print(f"  {member}: score={member.score:.3f}, metrics={member.metrics}")
     

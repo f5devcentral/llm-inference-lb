@@ -11,16 +11,18 @@ DYNAMIC_UPDATE_ENABLED = True
 
 # 初始指标值（可动态更新）
 metrics = {
-    "num_requests_waiting": 100.0,
-    "gpu_cache_usage_perc": 0.4
+    "num_requests_waiting": 50.0,
+    "gpu_cache_usage_perc": 0.8,
+    "num_running_reqs": 6.0
 }
 
 # 后台线程：每隔 1~10 秒更新一次指标值
 def update_metrics():
     while True:
         if DYNAMIC_UPDATE_ENABLED:
-            metrics["num_requests_waiting"] = round(random.uniform(100.0, 1000.0), 1)
-            metrics["gpu_cache_usage_perc"] = round(random.uniform(0.4, 1.0), 2)
+            metrics["num_requests_waiting"] = round(random.uniform(50.0, 500.0), 1)
+            metrics["gpu_cache_usage_perc"] = round(random.uniform(0.6, 1.0), 2)
+            metrics["num_running_reqs"] = round(random.uniform(15.0, 50.0), 1)
             #time.sleep(random.randint(1, 10))
             time.sleep(300)
         else:
@@ -38,6 +40,9 @@ sglang:num_queue_reqs{{model_name="meta-llama/Llama-3.1-8B-Instruct"}} {metrics[
 # HELP sglang:token_usage The token usage
 # TYPE sglang:token_usage gauge
 sglang:token_usage{{model_name="meta-llama/Llama-3.1-8B-Instruct"}} {metrics["gpu_cache_usage_perc"]}
+# HELP sglang:num_running_reqs The number of requests currently running
+# TYPE sglang:num_running_reqs gauge
+sglang:num_running_reqs{{model_name="meta-llama/Llama-3.1-8B-Instruct"}} {metrics["num_running_reqs"]}
 """.strip()
     return Response(content=content, media_type="text/plain")
 

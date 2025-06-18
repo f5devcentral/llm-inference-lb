@@ -40,15 +40,15 @@ scheduler:
   metrics_fetch_interval: 3000
 
 modes:
-  - name: s1
+  #- name: s1
     # Weight configuration, w_a+w_b=1, w_a is the weight of waiting queue, w_b is the weight of cache
-    w_a: 0.5
-    w_b: 0.5
-  # Currently only s1 algorithm mode is supported, s2 mode is reserved
-  #- name: s2
-  #  w_a: 0.5
-  #  w_b: 0.1
-  #  w_g: 0.4
+    #w_a: 0.5
+    #w_b: 0.5
+  # S2 algorithm mode: extends S1 with running requests metric
+  - name: s2
+    w_a: 0.6  # Weight for waiting queue metric
+    w_b: 0.2  # Weight for cache usage metric
+    w_g: 0.2  # Weight for running requests metric
     
 pools:
   - name: example_pool1
