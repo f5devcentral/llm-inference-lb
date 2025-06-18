@@ -1,3 +1,5 @@
+[[中文Readme]](./docs/README-zh.md) [[模块关系-中文]](./docs/模块关系-zh.md)
+
 # F5 LLM Inference Gateway Scheduler
 
 An intelligent scheduler for LLM inference gateway, designed to work with F5 LTM for optimal load balancing based on real-time performance metrics from inference engines.
@@ -41,6 +43,10 @@ scheduler-project/
 ├── requirements.txt        # Project dependencies
 └── README.md              # Project documentation
 ```
+
+## Modules Relationships
+
+[Check here](./docs/Module-Relationships.md) for detailed architecture.
 
 ## Installation and Deployment
 
