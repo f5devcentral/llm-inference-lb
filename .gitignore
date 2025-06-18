@@ -1,0 +1,13 @@
+# 忽略 macOS 的 .DS_Store 文件（任意目录下）
+.DS_Store
+**/.DS_Store
+
+# 忽略所有 __pycache__ 目录
+__pycache__/
+**/__pycache__/
+
+# 如果你确定不需要 __init__.py，可以取消注释以下行
+# __init__.py
+
+scheduler.log
+**/scheduler.log
