@@ -4,7 +4,7 @@ LLM推理网关智能调度器，用于与F5 LTM配合，实现基于推理引�
 
 ## 功能特性
 
-- **智能调度算法**: 基于等待队列和GPU缓存使用率的S1算法
+- **智能调度算法**: S1，S2算法
 - **多引擎支持**: 支持vLLM和SGLang推理引擎
 - **实时监控**: 自动获取F5 Pool成员和推理引擎性能指标
 - **高可用设计**: 异步架构，支持并发处理
@@ -41,6 +41,10 @@ scheduler-project/
 ├── requirements.txt        # 项目依赖
 └── README.md              # 项目说明
 ```
+
+## 模块关系
+
+[详细架构请查看](./模块关系-zh.md)
 
 ## 安装部署
 
@@ -329,7 +333,7 @@ none
 |--------|------|------|--------|------|
 | `host` | 字符串 | **是** | 无 | F5设备IP地址或主机名 |
 | `port` | 整数 | 否 | 443 | F5 iControl REST API端口 |
-| `username` | 字符串 | 否 | "admin" | F5设备登录用户名 |
+| `username` | 字符串 | 否 | "admin" | F5设备登录用户名，需要Guest角色或更高权限 |
 | `password_env` | 字符串 | 否 | 无 | F5密码的环境变量名 |
 
 ### 调度器配置 (scheduler)
@@ -343,10 +347,10 @@ none
 
 | 配置项 | 类型 | 必配 | 默认值 | 说明 |
 |--------|------|------|--------|------|
-| `name` | 字符串 | 否 | "s1" | 算法模式名称（当前仅支持s1） |
+| `name` | 字符串 | 否 | "s1" | 算法模式名称（支持s1和s2） |
 | `w_a` | 浮点数 | 否 | 0.5 | 等待队列权重（0-1之间） |
 | `w_b` | 浮点数 | 否 | 0.5 | 缓存使用率权重（0-1之间） |
-| `w_g` | 浮点数 | 否 | 0.0 | 预留权重（当前未使用） |
+| `w_g` | 浮点数 | 否 | 0.0 | 运行请求权重（在S2算法中使用） |
 
 ### Pool配置 (pools)
 
@@ -389,9 +393,15 @@ scheduler:
   metrics_fetch_interval: 3000
 
 modes:
-  - name: s1
-    w_a: 0.8 #在实际中w_a对TTFT影响更大
-    w_b: 0.2
+# 目前支持s1和s2算法。s1使用2个指标，s2使用3个指标
+# 您需要在实际环境中测试它们，看看哪个效果更好
+  #- name: s1
+    #w_a: 0.8 # 在实际中，w_a对TTFT影响更大
+    #w_b: 0.2
+  - name: s2
+    w_a: 0.4 # 等待队列指标权重
+    w_b: 0.3 # 缓存使用率指标权重
+    w_g: 0.3 # 运行请求指标权重
 
 pools:
   - name: llm-pool-1           # 必配：Pool名称
@@ -432,6 +442,23 @@ score = w_a × (1 - normalized_waiting_queue) + w_b × (1 - cache_usage)
 
 Score值越高表示成员性能越好，被选中的概率越大。
 
+### S2算法
+
+Score计算公式：
+```
+score = w_a × (1 - normalized_waiting_queue) + w_b × (1 - cache_usage) + w_g × (1 - normalized_running_req)
+```
+
+其中：
+- `w_a`: 等待队列权重
+- `w_b`: 缓存使用率权重
+- `w_g`: 运行请求权重
+- `normalized_waiting_queue`: 归一化的等待队列长度（0-1）
+- `cache_usage`: GPU缓存使用率（0-1）
+- `normalized_running_req`: 归一化的运行请求数（0-1）
+
+S2算法在S1基础上增加了第三个指标：运行请求数。这通过考虑不仅是排队请求，还有当前正在处理的请求，提供了更细粒度的负载均衡控制。通常w_a + w_b + w_g = 1能获得最佳效果。
+
 ### 加权随机选择
 
 基于每个成员的Score值进行加权随机选择：
@@ -445,10 +472,12 @@ Score值越高表示成员性能越好，被选中的概率越大。
 **vLLM引擎**:
 - `vllm:num_requests_waiting`: 等待队列中的请求数量
 - `vllm:gpu_cache_usage_perc`: GPU缓存使用百分比
+- `vllm:num_requests_running`: 当前运行中的请求数量（用于S2算法）
 
 **SGLang引擎**:
 - `sglang:num_queue_reqs`: 队列中的请求数量
 - `sglang:token_usage`: Token缓存使用率
+- `sglang:num_running_reqs`: 当前运行中的请求数量（用于S2算法）
 
 ## 运行监控
 
@@ -488,28 +517,28 @@ Score值越高表示成员性能越好，被选中的概率越大。
    - 检查F5设备网络连通性：`ping <f5_host>`
    - 验证用户名和密码是否正确
    - 确认F5设备开启iControl REST功能
-   - 确认登录账号没有因多次失败登录而被锁定
-   - 设置log leve为debug，查看日志细节
+   - 检查用户是否因多次失败登录而被锁定
+   - 设置log level为debug，查看详细日志
    
 2. **Metrics收集失败**
    - 检查推理引擎服务是否正常运行
    - 验证Metrics接口配置是否正确
    - 确认网络防火墙设置允许访问
    - 检查推理引擎的Metrics端口和路径
-   - 设置log leve为debug，查看日志细节
+   - 设置log level为debug，查看详细日志
    
 3. **Score计算异常**
    - 检查算法模式配置是否正确
-   - 验证权重参数设置（w_a + w_b 建议等于1）
+   - 验证权重参数设置（w_a + w_b建议等于1）
    - 查看Metrics数据完整性
    - 确认推理引擎类型配置正确
-   - 设置log leve为debug，查看日志细节
+   - 设置log level为debug，查看详细日志
    
 4. **Pool成员获取失败**
    - 验证Pool名称和Partition是否与F5配置一致
    - 检查F5设备上Pool的状态
    - 确认F5客户端连接和认证正常
-   - 设置log leve为debug，查看日志细节
+   - 设置log level为debug，查看详细日志
 
 ### 调试模式
 
@@ -566,20 +595,41 @@ ENGINE_METRICS = {
 
 ### 实现新的调度算法
 
+项目目前支持两种算法：S1和S2。要实现额外的算法：
+
 1. 在配置中添加新模式：
 ```yaml
 modes:
-  - name: s2
-    w_a: 0.4
+  - name: s3
+    w_a: 0.3
     w_b: 0.3
-    w_g: 0.3
+    w_g: 0.2
+    w_h: 0.2  # 根据需要添加新的权重参数
 ```
 
-2. 在 `core/score_calculator.py` 中实现算法逻辑：
+2. 如果需要新指标，在 `core/models.py` 中添加指标支持：
 ```python
-def _s2_algorithm(self, member: PoolMember, mode: ModeConfig) -> float:
-    # 实现S2算法
+ENGINE_METRICS = {
+    EngineType.VLLM: {
+        "waiting_queue": "vllm:num_requests_waiting",
+        "cache_usage": "vllm:gpu_cache_usage_perc",
+        "running_req": "vllm:num_requests_running",
+        "new_metric": "vllm:new_metric_name"  # 添加新指标
+    }
+}
+```
+
+3. 在 `core/score_calculator.py` 中实现算法逻辑：
+```python
+def _calculate_s3_scores(self, pool: Pool, mode_config: ModeConfig) -> None:
+    # 实现S3算法
     pass
+```
+
+4. 更新主计算方法以支持新算法：
+```python
+elif mode_config.name == "s3":
+    self._calculate_s3_scores(pool, mode_config)
 ```
 
 ## 许可证
