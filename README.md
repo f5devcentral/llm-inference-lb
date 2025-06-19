@@ -8,7 +8,7 @@ An intelligent scheduler for LLM inference gateway, designed to work with F5 LTM
 
 ## Features
 
-- **Intelligent Scheduling Algorithm**: S1 algorithm based on waiting queue and GPU cache usage
+- **Intelligent Scheduling Algorithm**: S1,S2. Based on different LLM server metrics
 - **Multi-Engine Support**: Supports vLLM and SGLang inference engines
 - **Real-time Monitoring**: Automatically fetches F5 Pool members and inference engine performance metrics
 - **High Availability Design**: Asynchronous architecture with concurrent processing support
