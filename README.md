@@ -6,6 +6,8 @@
 
 An intelligent scheduler for LLM inference gateway, designed to work with F5 LTM for optimal load balancing based on real-time performance metrics from inference engines.
 
+![abstraction-arch](docs/pics/abstraction-arch.jpg)
+
 ## Features
 
 - **Intelligent Scheduling Algorithm**: S1,S2. Based on different LLM server metrics
