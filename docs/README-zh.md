@@ -107,13 +107,98 @@ pools:
 ```bash
 export F5_PASSWORD="your_f5_password"
 export METRIC_PWD="your_metrics_password"  # 如果需要
+
+# 可选：日志文件路径配置（用于非Docker部署）
+export LOG_FILE_PATH="/var/log/f5-scheduler/scheduler.log"  # 自定义日志文件路径
 ```
+
+#### 日志文件路径配置
+
+**可选环境变量**: `LOG_FILE_PATH`
+
+- **如果设置**: 调度器将日志写入指定的文件路径
+  ```bash
+  export LOG_FILE_PATH="/var/log/f5-scheduler/scheduler.log"
+  # 日志将写入到: /var/log/f5-scheduler/scheduler.log
+  ```
+
+- **如果不设置**: 调度器将使用默认的日志文件路径
+  ```bash
+  # 默认日志文件: scheduler.log（在当前工作目录下）
+  # 例如：如果从 /opt/f5-scheduler/ 目录运行调度器，
+  # 日志文件将创建在 /opt/f5-scheduler/scheduler.log
+  ```
+
+**注意**: 此环境变量主要用于非Docker部署。对于Docker部署，请使用Docker部署章节中描述的 `LOG_TO_STDOUT` 和 `LOG_FILE_PATH` 环境变量。
 
 ### 5. 启动调度器
 
 ```bash
 python main.py
 ```
+
+## Docker 部署
+
+### 生产环境部署示例（推荐）
+
+```bash
+# 构建生产版镜像
+docker build -f Dockerfile.production -t f5-scheduler:latest .
+
+# 运行生产配置（标准输出日志 - 推荐）
+docker run -d \
+  --name f5-scheduler \
+  -p 8080:8080 \
+  -v $(pwd)/config/scheduler-config.yaml:/app/config/scheduler-config.yaml:ro \
+  -e F5_PASSWORD=your-password \
+  -e METRIC_PWD=your-metric-password \
+  -e LOG_TO_STDOUT=true \
+  --log-driver json-file \
+  --log-opt max-size=100m \
+  --log-opt max-file=3 \
+  --restart unless-stopped \
+  f5-scheduler:latest
+```
+
+### 备选方案：文件日志
+
+```bash
+# 运行文件日志模式（如果环境需要）
+docker run -d \
+  --name f5-scheduler-container \
+  -p 8080:8080 \
+  -v $(pwd)/config/scheduler-config.yaml:/app/config/scheduler-config.yaml:ro \
+  -v $(pwd)/logs:/app/logs \
+  -e F5_PASSWORD="your_f5_password" \
+  -e METRIC_PWD="your_metrics_password" \
+  -e LOG_TO_STDOUT="false" \
+  -e LOG_FILE_PATH="/app/logs/scheduler.log" \
+  --restart unless-stopped \
+  f5-scheduler:latest
+```
+
+### 环境变量
+
+```bash
+# 必需
+-e F5_PASSWORD="your_f5_password"                    # F5设备密码
+
+# 可选
+-e METRIC_PWD="your_metrics_password"                # 监控指标密码（可选）
+-e LOG_TO_STDOUT="true"                              # 日志输出方式（可选，仅生产版，默认：推荐true）
+-e LOG_FILE_PATH="/app/logs/scheduler.log"           # 日志文件路径（可选，仅当LOG_TO_STDOUT=false时使用）
+```
+
+### 日志记录最佳实践
+
+**推荐**: 对于容器部署使用 `LOG_TO_STDOUT="true"`（默认），因为：
+- 遵循12-Factor App原则和容器最佳实践
+- 更好地与Docker/Kubernetes日志系统集成
+- 便于集中式日志收集解决方案（ELK、Fluentd等）收集
+- 使用 `docker logs -f f5-scheduler-container` 查看日志
+- 更好的性能（无文件I/O开销）
+
+**文件日志** 仅在特定企业环境或传统日志收集系统需要时使用。
 
 ## API接口
 
@@ -444,20 +529,9 @@ Score值越高表示成员性能越好，被选中的概率越大。
 
 ### S2算法
 
-Score计算公式：
-```
-score = w_a × (1 - normalized_waiting_queue) + w_b × (1 - cache_usage) + w_g × (1 - normalized_running_req)
-```
+## Algorithm Description
 
-其中：
-- `w_a`: 等待队列权重
-- `w_b`: 缓存使用率权重
-- `w_g`: 运行请求权重
-- `normalized_waiting_queue`: 归一化的等待队列长度（0-1）
-- `cache_usage`: GPU缓存使用率（0-1）
-- `normalized_running_req`: 归一化的运行请求数（0-1）
-
-S2算法在S1基础上增加了第三个指标：运行请求数。这通过考虑不仅是排队请求，还有当前正在处理的请求，提供了更细粒度的负载均衡控制。通常w_a + w_b + w_g = 1能获得最佳效果。
+Please refer to [[LLM推理网关调度器算法对比分析]](./LLM推理网关调度器算法对比分析md)
 
 ### 加权随机选择
 

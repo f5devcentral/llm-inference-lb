@@ -115,7 +115,29 @@ pools:
 ```bash
 export F5_PASSWORD="your_f5_password"
 export METRIC_PWD="your_metrics_password"  # If needed
+
+# Optional: Log file path configuration (for non-Docker deployment)
+export LOG_FILE_PATH="/var/log/f5-scheduler/scheduler.log"  # Custom log file path
 ```
+
+#### Log File Path Configuration
+
+**Optional Environment Variable**: `LOG_FILE_PATH`
+
+- **If set**: The scheduler will write logs to the specified file path
+  ```bash
+  export LOG_FILE_PATH="/var/log/f5-scheduler/scheduler.log"
+  # Logs will be written to: /var/log/f5-scheduler/scheduler.log
+  ```
+
+- **If not set**: The scheduler will use the default log file path
+  ```bash
+  # Default log file: scheduler.log (in the current working directory)
+  # For example: if you run the scheduler from /opt/f5-scheduler/, 
+  # the log file will be created at /opt/f5-scheduler/scheduler.log
+  ```
+
+**Note**: This environment variable is primarily used for non-Docker deployments. For Docker deployments, use the `LOG_TO_STDOUT` and `LOG_FILE_PATH` environment variables as described in the Docker Deployment section.
 
 ### 5. Start the Scheduler
 
