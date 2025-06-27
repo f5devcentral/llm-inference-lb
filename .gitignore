@@ -11,3 +11,4 @@ __pycache__/
 
 scheduler.log
 **/scheduler.log
+./docs/local-docs/

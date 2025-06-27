@@ -54,6 +54,9 @@ class SchedulerLogger:
         self.logger = None
         # Maintain backward compatibility
         self.debug_enabled = (log_level == LogLevel.DEBUG)
+        # Support stdout-only logging for containers
+        # Check if we should use stdout-only mode (when log_file is explicitly set to empty string)
+        self.stdout_only = log_file == ""
         self.setup_logger()
     
     def setup_logger(self):
@@ -62,11 +65,10 @@ class SchedulerLogger:
         self.logger = logging.getLogger("scheduler")
         self.logger.setLevel(self.log_level.to_logging_level())
         
-        # Avoid duplicate handler addition
-        if self.logger.handlers:
-            # If handlers already exist, update levels
-            self._update_handler_levels()
-            return
+        # Clear existing handlers to avoid duplicates
+        for handler in self.logger.handlers[:]:
+            self.logger.removeHandler(handler)
+            handler.close()
         
         # Create formatter
         formatter = logging.Formatter(
@@ -79,15 +81,16 @@ class SchedulerLogger:
         console_handler.setFormatter(formatter)
         self.logger.addHandler(console_handler)
         
-        # File handler
-        try:
-            file_handler = logging.FileHandler(self.log_file, encoding='utf-8')
-            # Record all level logs in file for debugging
-            file_handler.setLevel(logging.DEBUG)
-            file_handler.setFormatter(formatter)
-            self.logger.addHandler(file_handler)
-        except Exception as e:
-            self.logger.warning(f"Unable to create log file {self.log_file}: {e}")
+        # File handler (only if not stdout-only mode)
+        if not self.stdout_only:
+            try:
+                file_handler = logging.FileHandler(self.log_file, encoding='utf-8')
+                # Use the same log level as configured for consistency
+                file_handler.setLevel(self.log_level.to_logging_level())
+                file_handler.setFormatter(formatter)
+                self.logger.addHandler(file_handler)
+            except Exception as e:
+                self.logger.warning(f"Unable to create log file {self.log_file}: {e}")
     
     def _update_handler_levels(self):
         """Update log levels for all handlers"""
@@ -99,12 +102,8 @@ class SchedulerLogger:
         
         # Update all handler levels
         for handler in self.logger.handlers:
-            if isinstance(handler, logging.StreamHandler) and not isinstance(handler, logging.FileHandler):
-                # Console handler: use configured log level
-                handler.setLevel(self.log_level.to_logging_level())
-            elif isinstance(handler, logging.FileHandler):
-                # File handler: always use DEBUG level to record all logs
-                handler.setLevel(logging.DEBUG)
+            # Both console and file handlers use the same configured log level
+            handler.setLevel(self.log_level.to_logging_level())
     
     def set_log_level(self, log_level: LogLevel):
         """Dynamically set log level"""
@@ -181,9 +180,21 @@ def init_logger(debug: bool = False, log_file: Optional[str] = None, log_level: 
     if _logger_instance is None:
         _logger_instance = SchedulerLogger(log_level=level, log_file=log_file)
     else:
-        # If logger already exists, update settings
-        _logger_instance.set_log_level(level)
-        if log_file and log_file != _logger_instance.log_file:
-            _logger_instance.log_file = log_file
+        # If logger already exists, check if we need to update settings
+        need_reinit = False
+        
+        # Check if log level changed
+        if _logger_instance.log_level != level:
+            _logger_instance.set_log_level(level)
+        
+        # Check if log file path changed
+        if log_file != _logger_instance.log_file:
+            _logger_instance.log_file = log_file or "scheduler.log"
+            _logger_instance.stdout_only = log_file == ""
+            need_reinit = True
+        
+        # If file path changed, reinitialize the logger handlers
+        if need_reinit:
+            _logger_instance.setup_logger()
     
     return _logger_instance 

@@ -1,0 +1,235 @@
+# F5 LLM Inference Gateway Scheduler Production Dockerfile
+# 使用官方Python 3.11 slim镜像作为基础镜像
+FROM python:3.11-slim
+
+# 设置工作目录
+WORKDIR /app
+
+# 设置环境变量
+ENV PYTHONPATH=/app
+ENV PYTHONUNBUFFERED=1
+ENV PYTHONDONTWRITEBYTECODE=1
+
+# 日志配置环境变量
+ENV LOG_FILE_PATH=/app/logs/scheduler.log
+ENV LOG_TO_STDOUT=false
+
+# 安装系统依赖
+RUN apt-get update && apt-get install -y \
+    gcc \
+    g++ \
+    curl \
+    logrotate \
+    cron \
+    && rm -rf /var/lib/apt/lists/*
+
+# 复制requirements.txt并安装Python依赖
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+
+# 复制项目源代码
+COPY . .
+
+# 创建必要的目录
+RUN mkdir -p /app/config /app/logs /var/log/f5-scheduler
+
+# 复制logrotate配置
+COPY config/logrotate.conf /etc/logrotate.d/f5-scheduler
+
+# 创建非root用户
+RUN groupadd -r scheduler && useradd -r -g scheduler scheduler
+
+# 设置目录权限
+RUN chown -R scheduler:scheduler /app /var/log/f5-scheduler
+RUN chmod 644 /etc/logrotate.d/f5-scheduler
+
+# 创建启动脚本
+COPY <<EOF /app/entrypoint.sh
+#!/bin/bash
+
+set -e
+
+# 颜色定义
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+BLUE='\033[0;34m'
+NC='\033[0m'
+
+# 日志函数
+log_info() {
+    echo -e "\${BLUE}[INFO]\${NC} \$1"
+}
+
+log_warn() {
+    echo -e "\${YELLOW}[WARN]\${NC} \$1"
+}
+
+log_error() {
+    echo -e "\${RED}[ERROR]\${NC} \$1"
+}
+
+log_success() {
+    echo -e "\${GREEN}[SUCCESS]\${NC} \$1"
+}
+
+# 验证和修正日志配置
+validate_log_config() {
+    log_info "验证日志配置..."
+    
+    # 标准化布尔值
+    case "\${LOG_TO_STDOUT,,}" in
+        "true"|"1"|"yes"|"on")
+            LOG_TO_STDOUT="true"
+            ;;
+        "false"|"0"|"no"|"off"|"")
+            LOG_TO_STDOUT="false"
+            ;;
+        *)
+            log_warn "无效的LOG_TO_STDOUT值: '\$LOG_TO_STDOUT'，默认设置为false"
+            LOG_TO_STDOUT="false"
+            ;;
+    esac
+    
+    # 处理各种配置组合
+    if [ "\$LOG_TO_STDOUT" = "true" ]; then
+        # stdout模式
+        if [ -n "\$LOG_FILE_PATH" ] && [ "\$LOG_FILE_PATH" != "" ]; then
+            log_warn "LOG_TO_STDOUT=true但提供了LOG_FILE_PATH='\$LOG_FILE_PATH'，将忽略文件路径"
+        fi
+        export LOG_FILE_PATH=""
+        log_success "日志配置: 输出到标准输出"
+    else
+        # 文件模式
+        if [ -z "\$LOG_FILE_PATH" ] || [ "\$LOG_FILE_PATH" = "" ]; then
+            log_warn "LOG_TO_STDOUT=false但未提供LOG_FILE_PATH，使用默认路径"
+            export LOG_FILE_PATH="/app/logs/scheduler.log"
+        fi
+        
+        # 验证日志文件路径
+        log_dir=\$(dirname "\$LOG_FILE_PATH")
+        if [ ! -d "\$log_dir" ]; then
+            log_info "创建日志目录: \$log_dir"
+            mkdir -p "\$log_dir" || {
+                log_error "无法创建日志目录: \$log_dir"
+                exit 1
+            }
+        fi
+        
+        # 检查目录权限
+        if [ ! -w "\$log_dir" ]; then
+            log_error "日志目录不可写: \$log_dir"
+            exit 1
+        fi
+        
+        log_success "日志配置: 输出到文件 \$LOG_FILE_PATH"
+    fi
+}
+
+# 启动cron服务（仅在文件模式下）
+start_cron_if_needed() {
+    if [ "\$LOG_TO_STDOUT" != "true" ]; then
+        log_info "启动cron服务用于日志轮转..."
+        service cron start || {
+            log_warn "无法启动cron服务，日志轮转将不可用"
+        }
+    fi
+}
+
+# 检查必需的环境变量
+check_required_env() {
+    log_info "检查必需的环境变量..."
+    
+    local missing_vars=""
+    
+    if [ -z "\$F5_PASSWORD" ]; then
+        missing_vars="\${missing_vars} F5_PASSWORD"
+    fi
+    
+    if [ -n "\$missing_vars" ]; then
+        log_error "缺少必需的环境变量:\$missing_vars"
+        log_error "请设置这些环境变量后重新启动容器"
+        exit 1
+    fi
+    
+    # 检查可选的环境变量
+    if [ -z "\$METRIC_PWD" ]; then
+        log_warn "METRIC_PWD未设置，如果需要监控指标功能，请设置此环境变量"
+    fi
+    
+    log_success "环境变量检查通过"
+}
+
+# 检查配置文件
+check_config_file() {
+    local config_file="\${CONFIG_FILE:-/app/config/scheduler-config.yaml}"
+    
+    log_info "检查配置文件: \$config_file"
+    
+    if [ ! -f "\$config_file" ]; then
+        log_error "配置文件不存在: \$config_file"
+        log_error "请确保配置文件已正确挂载到容器中"
+        exit 1
+    fi
+    
+    if [ ! -r "\$config_file" ]; then
+        log_error "配置文件不可读: \$config_file"
+        exit 1
+    fi
+    
+    log_success "配置文件检查通过"
+}
+
+# 显示启动信息
+show_startup_info() {
+    echo "=================================================="
+    echo "F5 LLM推理网关调度器容器启动"
+    echo "=================================================="
+    echo "容器信息:"
+    echo "  - 主机名: \$(hostname)"
+    echo "  - 用户: \$(whoami)"
+    echo "  - 工作目录: \$(pwd)"
+    echo ""
+    echo "环境配置:"
+    echo "  - LOG_TO_STDOUT: \$LOG_TO_STDOUT"
+    echo "  - LOG_FILE_PATH: \${LOG_FILE_PATH:-'(未设置)'}"
+    echo "  - CONFIG_FILE: \${CONFIG_FILE:-'/app/config/scheduler-config.yaml'}"
+    echo "=================================================="
+}
+
+# 主函数
+main() {
+    show_startup_info
+    check_required_env
+    check_config_file
+    validate_log_config
+    start_cron_if_needed
+    
+    log_success "所有检查通过，启动主程序..."
+    echo ""
+    
+    # 启动主程序
+    exec python main.py
+}
+
+# 信号处理
+trap 'log_info "接收到终止信号，正在关闭..."; exit 0' TERM INT
+
+# 执行主函数
+main "\$@"
+EOF
+
+RUN chmod +x /app/entrypoint.sh
+RUN chown scheduler:scheduler /app/entrypoint.sh
+
+USER scheduler
+
+# 暴露API端口
+EXPOSE 8080
+
+# 健康检查
+HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \
+    CMD curl -f http://localhost:8080/health || exit 1
+
+# 使用启动脚本
+ENTRYPOINT ["/app/entrypoint.sh"] 

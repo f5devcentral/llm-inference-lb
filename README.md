@@ -123,6 +123,69 @@ export METRIC_PWD="your_metrics_password"  # If needed
 python main.py
 ```
 
+## Docker Deployment
+
+### Production Deployment Example (Recommended)
+
+```bash
+# Build production image
+docker build -f Dockerfile.production -t f5-scheduler:latest .
+
+# Run with production configuration (stdout logging - recommended)
+docker run -d \
+  --name f5-scheduler \
+  -p 8080:8080 \
+  -v $(pwd)/config/scheduler-config.yaml:/app/config/scheduler-config.yaml:ro \
+  -e F5_PASSWORD=your-password \
+  -e METRIC_PWD=your-metric-password \ #optional
+  -e LOG_TO_STDOUT=true \
+  --log-driver json-file \
+  --log-opt max-size=100m \
+  --log-opt max-file=3 \
+  --restart unless-stopped \
+  f5-scheduler:latest
+```
+
+### Alternative: File Logging
+
+```bash
+# Run with file logging (if required by your environment)
+docker run -d \
+  --name f5-scheduler-container \
+  -p 8080:8080 \
+  -v $(pwd)/config/scheduler-config.yaml:/app/config/scheduler-config.yaml:ro \
+  -v $(pwd)/logs:/app/logs \
+  -e F5_PASSWORD="your_f5_password" \
+  -e METRIC_PWD="your_metrics_password" \
+  -e LOG_TO_STDOUT="false" \
+  -e LOG_FILE_PATH="/app/logs/scheduler.log" \
+  --restart unless-stopped \
+  f5-scheduler:latest
+```
+
+### Environment Variables
+
+```bash
+# Required
+-e F5_PASSWORD="your_f5_password"                    # F5 device password
+
+# Optional
+-e METRIC_PWD="your_metrics_password"                # Metrics service password (optional)
+-e LOG_TO_STDOUT="true"                              # Log output method (optional, production only, default: true recommended)
+-e LOG_FILE_PATH="/app/logs/scheduler.log"           # Log file path (optional, only used when LOG_TO_STDOUT=false)
+```
+
+### Logging Best Practices
+
+**Recommended**: Use `LOG_TO_STDOUT="true"` (default) for container deployments because:
+- Follows 12-Factor App principles and container best practices
+- Better integration with Docker/Kubernetes logging systems
+- Easier log collection with centralized logging solutions (ELK, Fluentd, etc.)
+- Use `docker logs -f f5-scheduler-container` to view logs
+- Better performance (no file I/O overhead)
+
+**File logging** should only be used when required by specific enterprise environments or legacy log collection systems.
+
 ## API Interfaces
 
 ### 1. Select Optimal Member

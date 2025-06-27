@@ -1,0 +1,231 @@
+---
+# ConfigMap for Fluentd configuration
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: fluentd-config
+  namespace: kube-system
+data:
+  fluent.conf: |
+    # F5 Scheduler日志收集配置
+    <source>
+      @type tail
+      @id f5-scheduler-logs
+      path /var/log/containers/*f5-scheduler*.log
+      pos_file /var/log/fluentd-f5-scheduler.log.pos
+      tag kubernetes.f5-scheduler
+      format json
+      time_key time
+      time_format %Y-%m-%dT%H:%M:%S.%NZ
+      keep_time_key true
+    </source>
+
+    # 解析Kubernetes容器日志格式
+    <filter kubernetes.f5-scheduler>
+      @type kubernetes_metadata
+      @id filter_kube_metadata_f5_scheduler
+    </filter>
+
+    # 添加自定义字段
+    <filter kubernetes.f5-scheduler>
+      @type record_transformer
+      <record>
+        service_name f5-scheduler
+        environment ${ENV_NAME}
+        cluster_name ${CLUSTER_NAME}
+      </record>
+    </filter>
+
+    # 输出到Elasticsearch
+    <match kubernetes.f5-scheduler>
+      @type elasticsearch
+      @id out_es_f5_scheduler
+      host elasticsearch.logging.svc.cluster.local
+      port 9200
+      index_name f5-scheduler-logs
+      type_name _doc
+      time_key @timestamp
+      time_key_format %Y-%m-%dT%H:%M:%S.%NZ
+      include_timestamp true
+      reload_connections false
+      reconnect_on_error true
+      reload_on_failure true
+      log_es_400_reason true
+      <buffer>
+        @type file
+        path /var/log/fluentd-buffers/f5-scheduler
+        flush_mode interval
+        flush_interval 10s
+        chunk_limit_size 8MB
+        queue_limit_length 32
+        retry_max_interval 30
+        retry_forever true
+      </buffer>
+    </match>
+
+---
+# Fluentd DaemonSet
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: fluentd-f5-scheduler
+  namespace: kube-system
+  labels:
+    app: fluentd-f5-scheduler
+spec:
+  selector:
+    matchLabels:
+      app: fluentd-f5-scheduler
+  template:
+    metadata:
+      labels:
+        app: fluentd-f5-scheduler
+    spec:
+      serviceAccountName: fluentd
+      containers:
+      - name: fluentd
+        image: fluent/fluentd-kubernetes-daemonset:v1-debian-elasticsearch
+        env:
+        - name: FLUENT_ELASTICSEARCH_HOST
+          value: "elasticsearch.logging.svc.cluster.local"
+        - name: FLUENT_ELASTICSEARCH_PORT
+          value: "9200"
+        - name: ENV_NAME
+          value: "production"
+        - name: CLUSTER_NAME
+          value: "k8s-cluster"
+        resources:
+          limits:
+            memory: 200Mi
+          requests:
+            cpu: 100m
+            memory: 200Mi
+        volumeMounts:
+        - name: config-volume
+          mountPath: /fluentd/etc
+        - name: varlog
+          mountPath: /var/log
+        - name: varlibdockercontainers
+          mountPath: /var/lib/docker/containers
+          readOnly: true
+      volumes:
+      - name: config-volume
+        configMap:
+          name: fluentd-config
+      - name: varlog
+        hostPath:
+          path: /var/log
+      - name: varlibdockercontainers
+        hostPath:
+          path: /var/lib/docker/containers
+
+---
+# ServiceAccount for Fluentd
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: fluentd
+  namespace: kube-system
+
+---
+# ClusterRole for Fluentd
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: fluentd
+rules:
+- apiGroups: [""]
+  resources: ["pods", "namespaces"]
+  verbs: ["get", "list", "watch"]
+
+---
+# ClusterRoleBinding for Fluentd
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: fluentd
+roleRef:
+  kind: ClusterRole
+  name: fluentd
+  apiGroup: rbac.authorization.k8s.io
+subjects:
+- kind: ServiceAccount
+  name: fluentd
+  namespace: kube-system
+
+---
+# 改进的F5 Scheduler Deployment (输出到stdout)
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: f5-scheduler
+  namespace: default
+  labels:
+    app: f5-scheduler
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: f5-scheduler
+  template:
+    metadata:
+      labels:
+        app: f5-scheduler
+      annotations:
+        # 日志收集注解
+        fluentd.io/include: "true"
+        fluentd.io/multiline: "true"
+    spec:
+      containers:
+      - name: f5-scheduler
+        image: f5-scheduler:latest
+        imagePullPolicy: IfNotPresent
+        ports:
+        - containerPort: 8080
+          name: api
+        env:
+        - name: F5_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: f5-scheduler-secrets
+              key: F5_PASSWORD
+        - name: METRIC_PWD
+          valueFrom:
+            secretKeyRef:
+              name: f5-scheduler-secrets
+              key: METRIC_PWD
+        - name: CONFIG_FILE
+          value: "/app/config/scheduler-config.yaml"
+        # 重要：启用stdout日志输出
+        - name: LOG_TO_STDOUT
+          value: "true"
+        - name: LOG_FILE_PATH
+          value: ""
+        volumeMounts:
+        - name: config-volume
+          mountPath: /app/config
+          readOnly: true
+        resources:
+          requests:
+            memory: "256Mi"
+            cpu: "250m"
+          limits:
+            memory: "512Mi"
+            cpu: "500m"
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 8080
+          initialDelaySeconds: 60
+          periodSeconds: 30
+        readinessProbe:
+          httpGet:
+            path: /health
+            port: 8080
+          initialDelaySeconds: 30
+          periodSeconds: 10
+      volumes:
+      - name: config-volume
+        configMap:
+          name: f5-scheduler-config
+      restartPolicy: Always 
