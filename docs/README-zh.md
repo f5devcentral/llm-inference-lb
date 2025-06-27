@@ -512,26 +512,7 @@ pools:
 
 ## 算法说明
 
-### S1算法
-
-Score计算公式：
-```
-score = w_a × (1 - normalized_waiting_queue) + w_b × (1 - cache_usage)
-```
-
-其中：
-- `w_a`: 等待队列权重（通常 w_a + w_b = 1）
-- `w_b`: 缓存使用率权重
-- `normalized_waiting_queue`: 归一化的等待队列长度（0-1）
-- `cache_usage`: GPU缓存使用率（0-1）
-
-Score值越高表示成员性能越好，被选中的概率越大。
-
-### S2算法
-
-## Algorithm Description
-
-Please refer to [[LLM推理网关调度器算法对比分析]](./LLM推理网关调度器算法对比分析md)
+Please refer to [[LLM推理网关调度器算法对比分析]](./LLM推理网关调度器算法对比分析.md)
 
 ### 加权随机选择
 
