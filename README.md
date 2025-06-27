@@ -1,6 +1,8 @@
-[[中文Readme]](./docs/README-zh.md)   [[模块关系-中文]](./docs/模块关系-zh.md)  [[程序有效性评估-中文]](./docs/Program-effectiveness-Evaluation-zh.md)
+[[中文Readme]](./docs/README-zh.md)   [[模块关系-中文]](./docs/模块关系-zh.md)  [[程序有效性评估-中文]](./docs/Program-effectiveness-Evaluation-zh.md) [[算法对比与选择指导]](./docs/LLM-Inference-Gateway-Scheduler-Algorithm-Comparison-Analysis.md)
 
-[[Modules relationships]](./docs/Module-Relationships.md)   [[Program effectiveness evaluation-EN]](./docs/Program-effectiveness-Evaluation.md)  [[LLM Performance improvement test]](./docs/Inference-performance-improvement-test.md)
+[[Modules relationships]](./docs/Module-Relationships.md)   [[Program effectiveness evaluation-EN]](./docs/Program-effectiveness-Evaluation.md) [[Scheduler Algorithm Comparison Analysis and guide]](./docs/LLM-Inference-Gateway-Scheduler-Algorithm-Comparison-Analysis.md)
+
+ [[LLM Performance improvement test]](./docs/Test-Summary-and-Thoughts.md)
 
 # F5 LLM Inference Gateway Scheduler
 
@@ -433,37 +435,7 @@ pools:
 
 ## Algorithm Description
 
-### S1 Algorithm
-
-Score calculation formula:
-```
-score = w_a × (1 - normalized_waiting_queue) + w_b × (1 - cache_usage)
-```
-
-Where:
-- `w_a`: Waiting queue weight (usually w_a + w_b = 1)
-- `w_b`: Cache usage weight
-- `normalized_waiting_queue`: Normalized waiting queue length (0-1)
-- `cache_usage`: GPU cache usage ratio (0-1)
-
-Higher Score values indicate better member performance with higher selection probability.
-
-### S2 Algorithm
-
-Score calculation formula:
-```
-score = w_a × (1 - normalized_waiting_queue) + w_b × (1 - cache_usage) + w_g × (1 - normalized_running_req)
-```
-
-Where:
-- `w_a`: Waiting queue weight
-- `w_b`: Cache usage weight
-- `w_g`: Running requests weight
-- `normalized_waiting_queue`: Normalized waiting queue length (0-1)
-- `cache_usage`: GPU cache usage ratio (0-1)
-- `normalized_running_req`: Normalized running requests count (0-1)
-
-The S2 algorithm extends S1 by adding a third metric: running requests. This provides more granular control over load balancing by considering not just queued requests but also currently processing requests. Usually w_a + w_b + w_g = 1 for optimal results.
+Please refer to [[LLM-Inference-Gateway-Scheduler-Algorithm-Comparison-Analysis]](./docs/LLM-Inference-Gateway-Scheduler-Algorithm-Comparison-Analysis.md)
 
 ### Weighted Random Selection
 

@@ -175,7 +175,8 @@ class MetricsCollector:
         
         # Build regex pattern to match metric lines
         # Format: metric_name{labels...} value
-        pattern = rf'^{re.escape(metric_name)}\{{.*?\}}\s+([0-9.-]+)$'
+        # Support both regular decimal format and scientific notation (e.g., 1.23e-05)
+        pattern = rf'^{re.escape(metric_name)}\{{.*?\}}\s+([0-9.-]+(?:[eE][+-]?[0-9]+)?)$'
         
         for line in metrics_text.split('\n'):
             line = line.strip()
