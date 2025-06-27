@@ -51,6 +51,9 @@ class ModeConfig:
     w_a: float = 0.5
     w_b: float = 0.5
     w_g: float = 0.0
+    # 动态waiting权重算法专用参数
+    transition_point: float = 30.0  # 过渡点：多少个等待请求作为权重调整的中心点
+    steepness: float = 1.0         # 陡峭度：控制权重过渡的平滑程度
 
 
 @dataclass
@@ -185,9 +188,16 @@ class ConfigLoader:
                 mode.w_b = float(mode_data.get('w_b', 0.5))
                 mode.w_g = float(mode_data.get('w_g', 0.0))
                 
-                # Validate mode
-                if mode.name not in ['s1', 's2']:
-                    self.logger.warning(f"Unsupported algorithm mode: {mode.name}, using default mode s1")
+                # 解析动态waiting权重算法专用参数
+                mode.transition_point = float(mode_data.get('transition_point', 30.0))
+                mode.steepness = float(mode_data.get('steepness', 1.0))
+                
+                # Validate algorithm mode
+                supported_modes = ['s1', 's1_enhanced', 's1_adaptive', 's1_ratio', 's1_precise', 's1_nonlinear', 
+                                 's1_balanced', 's1_adaptive_distribution', 's1_advanced', 's1_dynamic_waiting',
+                                 's2', 's2_enhanced', 's2_nonlinear', 's2_adaptive', 's2_advanced', 's2_dynamic_waiting']
+                if mode.name not in supported_modes:
+                    self.logger.warning(f"Unsupported algorithm mode: {mode.name}, supported modes: {supported_modes}, using default mode s1")
                     mode.name = 's1'
                 
                 config.modes.append(mode)

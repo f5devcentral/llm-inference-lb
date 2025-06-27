@@ -16,13 +16,13 @@ global:
   # WARNING: Show only WARNING, ERROR, CRITICAL level logs
   # ERROR: Show only ERROR, CRITICAL level logs
   # CRITICAL: Show only CRITICAL level logs
-  log_level: debug
+  log_level: INFO
   # Backward compatibility debug switch (used when log_level is not configured)
   # log_debug: True
 
 f5:
-  host: 127.0.0.1
-  port: 8443
+  host: 192.168.1.100
+  port: 443
   username: admin
   # Environment variable for password, program needs to read environment variable and replace the value here
   password_env: F5_PASSWORD
@@ -40,16 +40,12 @@ scheduler:
   metrics_fetch_interval: 3000
 
 modes:
-  #- name: s1
-    # Weight configuration, w_a+w_b=1, w_a is the weight of waiting queue, w_b is the weight of cache
-    #w_a: 0.5
-    #w_b: 0.5
-  # S2 algorithm mode: extends S1 with running requests metric
-  - name: s2
-    w_a: 0.6  # Weight for waiting queue metric
-    w_b: 0.2  # Weight for cache usage metric
-    w_g: 0.2  # Weight for running requests metric
-    
+  #scheduler-config.yaml.explanation for more argorithm and setting guide
+  #For more detailed guide,checking the "Comparative Analysis of LLM Inference Gateway Scheduler Algorithms" markdown file
+  - name: s1_enhanced
+    w_a: 0.2  # waiting_queue weight  
+    w_b: 0.8  # cache_usage weight
+
 pools:
   - name: example_pool1
     partition: Common

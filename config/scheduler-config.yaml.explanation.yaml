@@ -1,0 +1,187 @@
+# F5 LLM Inference Gateway Scheduler Configuration File
+global:
+  # Scheduler checks for configuration changes at this interval in seconds. The program will automatically hot reload.
+  interval: 5
+  # Scheduler API port for F5 sideband connection. Changing the port requires program restart.
+  api_port: 8080
+  # Scheduler API listening address for F5 sideband connection. Changing the address requires program restart.
+  # 0.0.0.0: Listen on all network interfaces (default)
+  # 127.0.0.1: Listen only on local loopback interface
+  # Specific IP: Listen on specified network interface
+  api_host: 0.0.0.0
+  # Log level configuration (recommend using log_level)
+  # Available values: DEBUG, INFO, WARNING, ERROR, CRITICAL
+  # DEBUG: Show all level logs
+  # INFO: Show INFO, WARNING, ERROR, CRITICAL level logs  
+  # WARNING: Show only WARNING, ERROR, CRITICAL level logs
+  # ERROR: Show only ERROR, CRITICAL level logs
+  # CRITICAL: Show only CRITICAL level logs
+  log_level: INFO
+  # Backward compatibility debug switch (used when log_level is not configured)
+  # log_debug: True
+
+f5:
+  host: 192.168.1.100
+  port: 443
+  username: admin
+  # Environment variable for password, program needs to read environment variable and replace the value here
+  password_env: F5_PASSWORD
+
+scheduler:
+  # Unit: seconds. This value should not be less than (metrics extraction timeout + 2) seconds, and should be as large as possible to avoid frequent F5 access.
+  # Large intervals prevent the scheduler from timely learning about pool member changes, using old member information, but this doesn't affect F5 normal operation.
+  # F5 will query the scheduler for the best node with the latest actual healthy member information, and the scheduler will select the best node based on the valid member information provided.
+  # After F5 adds a new member, the scheduler won't calculate the new member's weight before the interval arrives, the scheduler will still select from old members. This gives the new member natural warm-up time.
+  # After F5 removes a member, the scheduler still has the old member information before the interval arrives, but since it only looks for the best node among valid members provided from F5 sideband connection, the scheduler won't return the old member.
+  pool_fetch_interval: 10
+  # Unit: milliseconds. This value should maintain certain interval difference with fetch_interval to avoid conflicts between metrics collection objects and pool fetch objects (though uncommon).
+  # Multiple pools use parallel collection, this value is the interval time for each round of collection. The actual maximum time for each round of collection is [this value + metrics collection timeout (default 3s)].
+  # It's recommended to consult the inference engine administrator to understand the inference engine's own metrics update frequency. The corresponding matching setting (metrics_fetch_interval) should be appropriately smaller than the inference engine's metrics update frequency.
+  metrics_fetch_interval: 3000
+
+modes:
+  # 原始算法 - 不进行cache归一化
+  - name: s1
+    w_a: 0.2  # waiting_queue weight
+    w_b: 0.8  # cache_usage weight
+    
+  # 精确归一化算法 - 解决cache差异精确区分问题
+  - name: s1_enhanced
+    w_a: 0.2  # waiting_queue weight  
+    w_b: 0.8  # cache_usage weight
+    
+  # 比例归一化算法 - 直接基于相对比例分配
+  - name: s1_ratio
+    w_a: 0.2  # waiting_queue weight
+    w_b: 0.8  # cache_usage weight
+    
+  # 自适应算法 - 动态调整权重
+  - name: s1_adaptive  
+    w_a: 0.2  # waiting_queue weight
+    w_b: 0.8  # cache_usage weight
+    
+  # 高cache权重配置 - 适用于waiting_queue经常为0的场景
+  - name: s1_enhanced_high_cache
+    w_a: 0.1  # waiting_queue weight
+    w_b: 0.9  # cache_usage weight
+    
+  # 非线性放大算法 - 解决微小差异区分问题(ChatGPT建议)
+  - name: s1_nonlinear
+    w_a: 0.2  # waiting_queue weight
+    w_b: 0.8  # cache_usage weight
+    power: 2.0  # 非线性放大幂次
+  
+  # 原始S2算法
+  #- name: s2
+  #  w_a: 0.6  # Weight for waiting queue metric
+  #  w_b: 0.2  # Weight for cache usage metric
+  #  w_g: 0.2  # Weight for running requests metric
+  
+  # S2增强算法 - 对cache进行归一化以提高区分度
+  #- name: s2_enhanced
+  #  w_a: 0.4  # Weight for waiting queue metric (降低，因为经常为0)
+  #  w_b: 0.4  # Weight for cache usage metric (提高，增强区分度)
+  #  w_g: 0.2  # Weight for running requests metric
+    
+  # 可选：S2非线性算法 - 使用指数变换放大差异
+  #- name: s2_nonlinear
+  #  w_a: 0.4  # Weight for waiting queue metric
+  #  w_b: 0.4  # Weight for cache usage metric
+  #  w_g: 0.2  # Weight for running requests metric
+    
+  # 可选：S2自适应算法 - 根据指标变异系数动态调整权重
+  #- name: s2_adaptive
+  #  w_a: 0.4  # Base weight for waiting queue metric
+  #  w_b: 0.4  # Base weight for cache usage metric
+  #  w_g: 0.2  # Base weight for running requests metric
+    
+  # 🆕 平衡算法 - 专门解决两节点归一化极值问题
+  - name: s1_balanced
+    w_a: 0.3
+    w_b: 0.7
+
+  # 新增：自适应分布归一化算法 - 数学专家重新设计的普适算法
+  - name: s1_adaptive_distribution
+    w_a: 0.2
+    w_b: 0.8
+
+  # 🚀 终极算法：S1自适应分布归一化+动态权重 - 数学上最优解
+  - name: s1_advanced
+    w_a: 0.2  # 基础权重，会根据变异系数动态调整
+    w_b: 0.8  # 基础权重，会根据变异系数动态调整
+    
+  # 🚀 终极算法：S2自适应分布归一化+动态权重 - 三指标最优解
+  - name: s2_advanced
+    w_a: 0.4  # waiting_queue基础权重
+    w_b: 0.4  # cache_usage基础权重  
+    w_g: 0.2  # running_req基础权重
+
+  # 🎯 智能动态waiting权重算法 - 解决waiting request重要性动态变化问题
+  
+  # 动态waiting权重（双指标版本） - 最普适的智能权重调整算法  
+  - name: s1_dynamic_waiting
+    w_a: 0.3  # waiting_queue基础权重
+    w_b: 0.7  # cache_usage基础权重
+    transition_point: 30  # 过渡点：30个等待请求（可根据环境调整）
+    steepness: 1.0       # 陡峭度：控制过渡平滑程度（可调整）
+    
+    # 📊 算法原理：
+    # 使用tanh数学函数实现平滑的权重过渡，避免硬阈值突变
+    # intensity = tanh(max_waiting * steepness / transition_point)
+    # 
+    # 🔄 权重变化范围：
+    # - 无等待时（max_waiting=0）：0.2×waiting + 1.8×cache（主要靠cache区分）
+    # - 轻度等待时（max_waiting=15）：约0.8×waiting + 1.2×cache（开始平衡）
+    # - 重度等待时（max_waiting≥60）：2.5×waiting + 0.3×cache（主要靠waiting区分）
+    #
+    # ⚙️ 参数调优指南：
+    # - transition_point: 调整过渡的中心点
+    #   * 低负载环境：建议15-20
+    #   * 高负载环境：建议30-50
+    # - steepness: 调整过渡的陡峭程度  
+    #   * 需要快速响应：建议1.5-2.0
+    #   * 需要平缓过渡：建议0.5-1.0
+    #
+    # ✅ 适用场景：所有vLLM/SGLang等推理引擎环境（双指标）
+    
+  # 动态waiting权重（三指标版本） - 适用于有running_req指标的场景
+  - name: s2_dynamic_waiting
+    w_a: 0.4  # waiting_queue基础权重
+    w_b: 0.3  # cache_usage基础权重  
+    w_g: 0.3  # running_req基础权重
+    transition_point: 30  # 过渡点：30个等待请求（可根据环境调整）
+    steepness: 1.0       # 陡峭度：控制过渡平滑程度（可调整）
+    
+    # 📊 三指标动态调整原理：
+    # intensity = tanh(max_waiting * steepness / transition_point)
+    # 
+    # 🔄 三指标权重变化范围：
+    # - 无等待时（max_waiting=0）：0.1×waiting + 1.5×cache + 1.4×running（主要靠cache和running区分）
+    # - 轻度等待时（max_waiting=15）：约1.0×waiting + 1.0×cache + 1.0×running（三指标平衡）
+    # - 重度等待时（max_waiting≥60）：2.5×waiting + 0.4×cache + 0.6×running（主要靠waiting区分）
+    #
+    # ✅ 适用场景：所有支持running_req指标的推理引擎环境（三指标）
+
+pools:
+  - name: example_pool1
+    partition: Common
+    engine_type: vllm
+    metrics:
+      schema: http
+      #port: 30000
+      path: /metrics
+      timeout: 4  # HTTP request timeout (seconds)
+      APIkey: abcdefdfdsfds
+      metric_user: user1
+      metric_pwd_env: METRIC_PWD
+  - name: example_pool2
+    partition: Common
+    engine_type: sglang
+    metrics:
+      schema: http
+      #port: 30001
+      path: /metrics
+      timeout: 4  # HTTP request timeout (seconds)
+      APIkey: abcdef
+      metric_user: user1
+      metric_pwd_env: METRIC_PWD
