@@ -1,0 +1,147 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: f5-scheduler-config
+  namespace: default
+data:
+  scheduler-config.yaml: |
+    # F5 LLM Inference Gateway Scheduler Configuration File
+    global:
+      interval: 5
+      api_port: 8080
+      api_host: 0.0.0.0
+      log_level: INFO
+
+    f5:
+      host: 192.168.1.100
+      port: 443
+      username: admin
+      password_env: F5_PASSWORD
+
+    scheduler:
+      pool_fetch_interval: 10
+      metrics_fetch_interval: 3000
+
+    modes:
+      - name: s1_enhanced
+        w_a: 0.2
+        w_b: 0.8
+
+    pools:
+      - name: example_pool1
+        partition: Common
+        engine_type: vllm
+        metrics:
+          schema: http
+          path: /metrics
+          timeout: 4
+          APIkey: abcdefdfdsfds
+          metric_user: user1
+          metric_pwd_env: METRIC_PWD
+
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: f5-scheduler-secrets
+  namespace: default
+type: Opaque
+data:
+  # Base64编码的密码，请替换为实际值
+  # echo -n "your-f5-password" | base64
+  F5_PASSWORD: eW91ci1mNS1wYXNzd29yZA==
+  # echo -n "your-metric-password" | base64  
+  METRIC_PWD: eW91ci1tZXRyaWMtcGFzc3dvcmQ=
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: f5-scheduler
+  namespace: default
+  labels:
+    app: f5-scheduler
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: f5-scheduler
+  template:
+    metadata:
+      labels:
+        app: f5-scheduler
+    spec:
+      containers:
+      - name: f5-scheduler
+        image: f5-scheduler:latest
+        imagePullPolicy: IfNotPresent
+        ports:
+        - containerPort: 8080
+          name: api
+        env:
+        - name: F5_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: f5-scheduler-secrets
+              key: F5_PASSWORD
+        - name: METRIC_PWD
+          valueFrom:
+            secretKeyRef:
+              name: f5-scheduler-secrets
+              key: METRIC_PWD
+        - name: CONFIG_FILE
+          value: "/app/config/scheduler-config.yaml"
+        volumeMounts:
+        - name: config-volume
+          mountPath: /app/config
+          readOnly: true
+        - name: logs-volume
+          mountPath: /app/logs
+        resources:
+          requests:
+            memory: "256Mi"
+            cpu: "250m"
+          limits:
+            memory: "512Mi"
+            cpu: "500m"
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 8080
+          initialDelaySeconds: 60
+          periodSeconds: 30
+          timeoutSeconds: 10
+          failureThreshold: 3
+        readinessProbe:
+          httpGet:
+            path: /health
+            port: 8080
+          initialDelaySeconds: 30
+          periodSeconds: 10
+          timeoutSeconds: 5
+          failureThreshold: 3
+      volumes:
+      - name: config-volume
+        configMap:
+          name: f5-scheduler-config
+      - name: logs-volume
+        emptyDir: {}
+      restartPolicy: Always
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: f5-scheduler-service
+  namespace: default
+  labels:
+    app: f5-scheduler
+spec:
+  type: ClusterIP
+  ports:
+  - port: 8080
+    targetPort: 8080
+    protocol: TCP
+    name: api
+  selector:
+    app: f5-scheduler 

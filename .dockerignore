@@ -1,0 +1,56 @@
+# Git相关文件
+.git
+.gitignore
+
+# Docker相关文件
+Dockerfile
+docker-compose.yml
+.dockerignore
+
+# Kubernetes相关文件
+k8s-deployment.yaml
+
+# Python相关
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+venv/
+ENV/
+env.bak/
+venv.bak/
+
+# 测试和开发文件
+tests/
+*.log
+logs/
+
+# IDE和编辑器文件
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# 操作系统文件
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# 文档文件
+docs/
+*.md
+README*
+
+# 许可证文件
+LICENSE
+
+# 临时文件
+*.tmp
+*.temp 

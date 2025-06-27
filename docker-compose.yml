@@ -1,0 +1,26 @@
+version: '3.8'
+
+services:
+  f5-scheduler:
+    build: .
+    ports:
+      - "8080:8080"
+    volumes:
+      # 挂载配置文件
+      - ./config/scheduler-config.yaml:/app/config/scheduler-config.yaml:ro
+      # 挂载日志目录（可选）
+      - ./logs:/app/logs
+    environment:
+      # F5设备密码
+      - F5_PASSWORD=${F5_PASSWORD}
+      # 监控指标密码
+      #- METRIC_PWD=${METRIC_PWD}
+      # 可选：覆盖默认配置文件路径
+      # - CONFIG_FILE=/app/config/scheduler-config.yaml
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s 

@@ -107,9 +107,11 @@ class SchedulerApp:
             self.config_hot_reloader = ConfigHotReloader(self.config_file)
             
             # Initialize logging
+            # Support environment variable for log file path
+            log_file_path = os.getenv('LOG_FILE_PATH', 'scheduler.log')
             self.logger = init_logger(
                 debug=self.config.global_config.log_debug,
-                log_file="scheduler.log",
+                log_file=log_file_path,
                 log_level=self.config.global_config.log_level
             )
             
