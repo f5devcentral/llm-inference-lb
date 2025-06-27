@@ -512,7 +512,7 @@ pools:
 
 ## 算法说明
 
-Please refer to [[LLM推理网关调度器算法对比分析]](./LLM推理网关调度器算法对比分析.md)
+Please refer to [LLM推理网关调度器算法对比分析](./LLM推理网关调度器算法对比分析.md)
 
 ### 加权随机选择
 
