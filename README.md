@@ -1,4 +1,4 @@
-[[中文Readme]](./docs/README-zh.md)   [[模块关系-中文]](./docs/模块关系-zh.md)  [[程序有效性评估-中文]](./docs/Program-effectiveness-Evaluation-zh.md) [[算法对比与选择指导]](./docs/LLM-Inference-Gateway-Scheduler-Algorithm-Comparison-Analysis.md)
+[[中文Readme]](./docs/README-zh.md)   [[模块关系-中文]](./docs/模块关系-zh.md)  [[程序有效性评估-中文]](./docs/Program-effectiveness-Evaluation-zh.md) [[算法对比与选择指导]](./docs/LLM推理网关调度器算法对比分析.md)
 
 [[Modules relationships]](./docs/Module-Relationships.md)   [[Program effectiveness evaluation-EN]](./docs/Program-effectiveness-Evaluation.md) [[Scheduler Algorithm Comparison Analysis and guide]](./docs/LLM-Inference-Gateway-Scheduler-Algorithm-Comparison-Analysis.md)
 
