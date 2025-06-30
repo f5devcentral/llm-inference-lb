@@ -9,6 +9,9 @@ __pycache__/
 # 如果你确定不需要 __init__.py，可以取消注释以下行
 # __init__.py
 
+.venv
+**/.venv
+
 scheduler.log
 **/scheduler.log
 docs/local-docs/

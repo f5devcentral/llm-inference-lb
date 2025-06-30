@@ -21,7 +21,8 @@ global:
   #log_debug: False
 
 f5:
-  host: host.docker.internal
+  #host: host.docker.internal
+  host: 127.0.0.1
   port: 8443
   username: admin
   # Environment variable for password, program needs to read environment variable and replace the value here
@@ -37,14 +38,15 @@ scheduler:
   # Unit: milliseconds. This value should maintain certain interval difference with fetch_interval to avoid conflicts between metrics collection objects and pool fetch objects (though uncommon).
   # Multiple pools use parallel collection, this value is the interval time for each round of collection. The actual maximum time for each round of collection is [this value + metrics collection timeout (default 3s)].
   # It's recommended to consult the inference engine administrator to understand the inference engine's own metrics update frequency. The corresponding matching setting (metrics_fetch_interval) should be appropriately smaller than the inference engine's metrics update frequency.
-  metrics_fetch_interval: 3000
+  metrics_fetch_interval: 1000
 
 modes:
   #scheduler-config.yaml.explanation for more argorithm and setting guide
   #For more detailed guide,checking the "Comparative Analysis of LLM Inference Gateway Scheduler Algorithms" markdown file
   - name: s1_enhanced
     w_a: 0.2  # waiting_queue weight  
-    w_b: 0.8  # cache_usage weight
+    w_b: 0.6  # cache_usage weight
+    #w_g: 0.2  # running_request weight
 
 pools:
   - name: example_pool1
