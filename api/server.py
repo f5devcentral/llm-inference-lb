@@ -106,14 +106,28 @@ class APIServer:
                 self.logger.error(f"API Exception: {e}")
                 raise HTTPException(status_code=500, detail="Internal Server Error")
         
-        @app.get("/pools/{pool_name}/{partition}/status", response_model=PoolStatusResponse)
-        async def get_pool_status(pool_name: str, partition: str):
+        @app.get("/pools/{pool_name}/{partition}/status")
+        async def get_pool_status(pool_name: str, partition: str, simple: Optional[str] = None):
             """Get Pool status"""
             try:
                 status = self.scheduler.get_pool_status(pool_name, partition)
                 if not status:
                     raise HTTPException(status_code=404, detail=f"Pool {pool_name}:{partition} does not exist")
                 
+                # 如果带有 simple 参数，返回简化格式
+                if simple is not None:
+                    simple_output = []
+                    for member in status.get('members', []):
+                        ip = member.get('ip')
+                        port = member.get('port')
+                        score = member.get('score', 0)
+                        # 格式化为小数点后4位
+                        formatted_score = f"{score:.4f}"
+                        simple_output.append(f"{ip}:{port} {formatted_score}")
+                    
+                    return PlainTextResponse("\n".join(simple_output))
+                
+                # 默认返回JSON格式
                 return PoolStatusResponse(**status)
                 
             except HTTPException:
