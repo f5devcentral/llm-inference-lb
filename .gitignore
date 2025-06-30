@@ -12,6 +12,10 @@ __pycache__/
 .venv
 **/.venv
 
+
+tests/*.png
+tests/*.log
+
 scheduler.log
 **/scheduler.log
 docs/local-docs/
