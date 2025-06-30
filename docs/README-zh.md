@@ -279,6 +279,24 @@ none
 }
 ```
 
+**GET** `/pools/{pool_name}/{partition}/status?simple`
+
+**功能**: 获取指定Pool的member score分值的简单输出
+
+**参数**:
+
+- `pool_name`: Pool名称
+- `partition`: Partition名称
+- `simple`:查询参数
+
+**响应**:
+
+```
+127.0.0.1:8001 0.5404
+127.0.0.1:8002 0.0000
+127.0.0.1:8003 0.2846
+```
+
 ### 3. 获取所有Pool状态
 
 **GET** `/pools/status`
