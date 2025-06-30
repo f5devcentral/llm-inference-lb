@@ -96,9 +96,9 @@ scheduler:
   metrics_fetch_interval: 3000  # Metrics collection interval (milliseconds)
 
 modes:
-  - name: s1                    # Algorithm mode name
-    w_a: 0.5                    # Waiting queue weight
-    w_b: 0.5                    # Cache usage weight
+  - name: s1_enhanced           # Algorithm mode name
+    w_a: 0.1                    # Waiting queue weight
+    w_b: 0.9                    # Cache usage weight
 
 pools:
   - name: llm-pool-1            # Pool name (required)
@@ -254,6 +254,7 @@ none
 **Function**: Get detailed status information for a specific Pool
 
 **Parameters**:
+
 - `pool_name`: Pool name
 - `partition`: Partition name
 
@@ -285,6 +286,24 @@ none
     }
   ]
 }
+```
+
+**GET** `/pools/{pool_name}/{partition}/status?simple`
+
+**Function**: Get simpele score information for a specific Pool
+
+**Parameters**:
+
+- `pool_name`: Pool name
+- `partition`: Partition naem
+- `simple`: query parameter
+
+**Response**:
+
+```
+127.0.0.1:8001 0.5404
+127.0.0.1:8002 0.0000
+127.0.0.1:8003 0.2846
 ```
 
 ### 3. Get All Pools Status
