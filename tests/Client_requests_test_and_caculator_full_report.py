@@ -169,7 +169,8 @@ def main():
         time.sleep(1)
 
         if trigger_metrics_update():
-            print("All metrics update requests executed successfully.")
+            print("All metrics update requests executed successfully. Delaying 2 second for make sure metrics are fetched and updated.")
+            time.sleep(2)
         else:
             print("Some metrics update requests failed, please check service status.")
 
