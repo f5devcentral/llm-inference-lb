@@ -231,8 +231,14 @@ class Scheduler:
             self.logger.warning(f"No matching candidate members in Pool {pool_name}")
             return None
         
+        # Apply member threshold filtering using original metrics values
+        filtered_members = self._filter_members_by_thresholds(pool, intersection)
+        if not filtered_members:
+            self.logger.warning(f"All candidate members filtered out by thresholds in Pool {pool_name}")
+            return None
+        
         # Use weighted random algorithm to select optimal member
-        selected_member = self.selector.select(intersection)
+        selected_member = self.selector.select(filtered_members)
         if selected_member:
             result = str(selected_member)
             self.logger.info(
@@ -285,6 +291,48 @@ class Scheduler:
         )
         
         return intersection
+    
+    def _filter_members_by_thresholds(self, pool: Pool, members: List[PoolMember]) -> List[PoolMember]:
+        """Filter members based on configured thresholds using original metrics values"""
+        # If no thresholds are configured, return all members
+        if (pool.member_running_req_threshold is None and 
+            pool.member_waiting_queue_threshold is None):
+            return members
+        
+        filtered_members = []
+        excluded_count = 0
+        
+        for member in members:
+            metrics = member.metrics
+            if not metrics:
+                # No metrics data available, keep this member (conservative approach)
+                filtered_members.append(member)
+                self.logger.debug(f"Member {member} has no metrics data, keeping in selection")
+                continue
+            
+            # Check running request threshold
+            if pool.member_running_req_threshold is not None:
+                running_req = metrics.get("running_req", 0.0)  # Use original metrics value
+                if running_req > pool.member_running_req_threshold:
+                    excluded_count += 1
+                    self.logger.debug(f"Member {member} excluded: running_req={running_req} > threshold={pool.member_running_req_threshold}")
+                    continue
+            
+            # Check waiting queue threshold
+            if pool.member_waiting_queue_threshold is not None:
+                waiting_queue = metrics.get("waiting_queue", 0.0)  # Use original metrics value
+                if waiting_queue > pool.member_waiting_queue_threshold:
+                    excluded_count += 1
+                    self.logger.debug(f"Member {member} excluded: waiting_queue={waiting_queue} > threshold={pool.member_waiting_queue_threshold}")
+                    continue
+            
+            # Member passed all threshold checks
+            filtered_members.append(member)
+        
+        if excluded_count > 0:
+            self.logger.info(f"Pool {pool.name}: {excluded_count} members excluded by thresholds, {len(filtered_members)} remaining")
+        
+        return filtered_members
     
     def get_pool_status(self, pool_name: str, partition: str) -> Optional[Dict]:
         """Get pool status information"""

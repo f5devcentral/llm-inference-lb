@@ -104,6 +104,10 @@ pools:
   - name: llm-pool-1            # Pool name (required)
     partition: Common           # Partition name
     engine_type: vllm           # Engine type (required)
+    fallback:                   # Fallback configuration (optional)
+      pool_fallback: false      # Pool-level fallback switch
+      member_running_req_threshold: 20.0    # Running requests threshold
+      member_waiting_queue_threshold: 15.0  # Waiting queue threshold
     metrics:
       schema: http              # Protocol type
       path: /metrics            # Metrics path
@@ -232,20 +236,31 @@ Successfully selected optimal member:
 10.10.10.10:8001
 ```
 
+Pool has fallback mode enabled:
+```
+fallback
+```
+
 Unable to select optimal member (Pool doesn't exist, empty member list, all members have Score of 0, etc.):
 ```
 none
 ```
 
 **Status Codes**:
-- `200`: Success (includes both successful selection and unable to select scenarios)
+- `200`: Success (includes successful selection, fallback, and unable to select scenarios)
 - `400`: Bad request parameters
 - `500`: Internal server error
+
+**Response Types**:
+- **Normal Selection**: Returns specific member address (e.g., `10.10.10.10:8001`)
+- **Fallback Mode**: Returns string `fallback` when Pool is configured with `pool_fallback: true`
+- **Unable to Select**: Returns string `none`
 
 **Common scenarios when unable to select**:
 - Pool does not exist in the scheduler
 - No intersection between requested member list and actual Pool members
 - No members in the Pool
+- All candidate members are filtered out by thresholds
 
 ### 2. Get Single Pool Status
 
@@ -472,6 +487,20 @@ none
 | `partition` | String | No | "Common" | Partition name on F5 |
 | `engine_type` | String | **Yes** | None | Inference engine type (vllm/sglang) |
 
+### Fallback Configuration (pools[].fallback)
+
+| Config Item | Type | Required | Default | Description |
+|-------------|------|----------|---------|-------------|
+| `pool_fallback` | Boolean | No | false | Pool-level fallback switch, returns "fallback" when enabled |
+| `member_running_req_threshold` | Float | No | null | Running requests threshold, members are excluded when exceeded |
+| `member_waiting_queue_threshold` | Float | No | null | Waiting queue length threshold, members are excluded when exceeded |
+
+**Fallback Feature Description**:
+- **Pool-level fallback**: When `pool_fallback: true`, `/scheduler/select` API directly returns string `"fallback"` without any member selection or score calculation
+- **Member threshold filtering**: Compares against raw metrics values, members exceeding thresholds are excluded from selection
+- **Priority**: Pool-level fallback has the highest priority; when enabled, member threshold filtering is ignored
+- **Threshold comparison**: Uses raw collected metric values (not normalized scores) for direct numerical comparison with configured thresholds
+
 ### Metrics Configuration (pools[].metrics)
 
 | Config Item | Type | Required | Default | Description |
@@ -519,6 +548,10 @@ pools:
   - name: llm-pool-1           # Required: Pool name
     partition: Common
     engine_type: vllm          # Required: Engine type
+    fallback:                  # Optional: Fallback configuration
+      pool_fallback: false     # Pool-level fallback switch
+      member_running_req_threshold: 25.0   # Exclude overloaded members
+      member_waiting_queue_threshold: 20.0 # Exclude high-queue members
     metrics:
       schema: http
       path: /metrics
@@ -530,6 +563,10 @@ pools:
   - name: llm-pool-2
     partition: tenant-1
     engine_type: sglang
+    fallback:                  # Optional: Fallback configuration  
+      pool_fallback: false     # Normal scheduling mode
+      member_running_req_threshold: 30.0   # Higher threshold for SGLang
+      # member_waiting_queue_threshold not set - no queue limit
     metrics:
       schema: https
       port: 9090               # Use unified metrics port

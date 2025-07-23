@@ -96,6 +96,10 @@ pools:
   - name: llm-pool-1            # Pool名称（必配）
     partition: Common           # Partition名称
     engine_type: vllm           # 引擎类型（必配）
+    fallback:                   # Fallback配置（可选）
+      pool_fallback: false      # Pool级别fallback开关
+      member_running_req_threshold: 20.0    # 运行请求数阈值
+      member_waiting_queue_threshold: 15.0  # 等待队列长度阈值
     metrics:
       schema: http              # 协议类型
       path: /metrics            # Metrics路径
@@ -189,9 +193,7 @@ docker run -d \
 -e LOG_FILE_PATH="/app/logs/scheduler.log"           # 日志文件路径（可选，仅当LOG_TO_STDOUT=false时使用）
 ```
 
-### 日志记录最佳实践
-
-**推荐**: 对于容器部署使用 `LOG_TO_STDOUT="true"`（默认），因为：
+**推荐**: 对于容器部署使用 `LOG_TO_STDOUT="true"`（默认）：
 - 遵循12-Factor App原则和容器最佳实践
 - 更好地与Docker/Kubernetes日志系统集成
 - 便于集中式日志收集解决方案（ELK、Fluentd等）收集
@@ -224,20 +226,31 @@ docker run -d \
 10.10.10.10:8001
 ```
 
+Pool启用了fallback模式：
+```
+fallback
+```
+
 无法选择最优成员（Pool不存在、成员列表为空、所有成员Score为0等情况）：
 ```
 none
 ```
 
 **状态码**:
-- `200`: 成功（包括成功选择和无法选择两种情况）
+- `200`: 成功（包括成功选择、fallback和无法选择三种情况）
 - `400`: 请求参数错误
 - `500`: 内部服务器错误
+
+**响应类型说明**:
+- **正常选择**: 返回具体的member地址（如`10.10.10.10:8001`）
+- **Fallback模式**: 当Pool配置`pool_fallback: true`时，直接返回字符串`fallback`
+- **无法选择**: 返回字符串`none`
 
 **无法选择的常见情况**:
 - Pool在调度器中不存在
 - 请求的成员列表与Pool中的实际成员没有交集
 - Pool中没有任何成员
+- 所有候选成员都被阈值过滤排除
 
 ### 2. 获取单个Pool状态
 
@@ -463,6 +476,20 @@ none
 | `partition` | 字符串 | 否 | "Common" | F5上的Partition名称 |
 | `engine_type` | 字符串 | **是** | 无 | 推理引擎类型（vllm/sglang） |
 
+### Fallback配置 (pools[].fallback)
+
+| 配置项 | 类型 | 必配 | 默认值 | 说明 |
+|--------|------|------|--------|------|
+| `pool_fallback` | 布尔值 | 否 | false | Pool级别的fallback开关，启用时直接返回"fallback" |
+| `member_running_req_threshold` | 浮点数 | 否 | null | 运行请求数阈值，超过时该成员被排除选择 |
+| `member_waiting_queue_threshold` | 浮点数 | 否 | null | 等待队列长度阈值，超过时该成员被排除选择 |
+
+**Fallback功能说明**:
+- **Pool级别fallback**: 当`pool_fallback: true`时，`/scheduler/select`接口直接返回字符串`"fallback"`，不进行任何成员选择和分值计算
+- **成员阈值过滤**: 基于原始metrics值进行比较，超过阈值的成员在选择过程中被排除
+- **优先级**: Pool级别fallback优先级最高，如果启用则忽略成员阈值过滤
+- **阈值比较**: 使用采集到的原始指标值（非归一化分值）与配置的阈值进行直接数值比较
+
 ### Metrics配置 (pools[].metrics)
 
 | 配置项 | 类型 | 必配 | 默认值 | 说明 |
@@ -510,6 +537,10 @@ pools:
   - name: llm-pool-1           # 必配：Pool名称
     partition: Common
     engine_type: vllm          # 必配：引擎类型
+    fallback:                  # 可选：Fallback配置
+      pool_fallback: false     # Pool级别fallback开关
+      member_running_req_threshold: 25.0   # 排除过载成员
+      member_waiting_queue_threshold: 20.0 # 排除高队列成员
     metrics:
       schema: http
       path: /metrics
@@ -521,6 +552,10 @@ pools:
   - name: llm-pool-2
     partition: tenant-1
     engine_type: sglang
+    fallback:                  # 可选：Fallback配置  
+      pool_fallback: false     # 正常调度模式
+      member_running_req_threshold: 30.0   # SGLang使用更高阈值
+      # member_waiting_queue_threshold 未设置 - 不限制队列
     metrics:
       schema: https
       port: 9090               # 使用统一的metrics端口

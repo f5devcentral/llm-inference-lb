@@ -52,6 +52,10 @@ pools:
   - name: example_pool1
     partition: Common
     engine_type: vllm
+    fallback:
+      pool_fallback: false  # Pool level fallback switch, default is false. If true, API will return "fallback" directly
+      member_running_req_threshold: 100  # Running request threshold for member filtering (optional)，it is the any one logic between member_running_req_threshold and member_waiting_queue_threshold
+      member_waiting_queue_threshold: 100.0  # Waiting queue threshold for member filtering (optional)，it is the any one logic between member_running_req_threshold and member_waiting_queue_threshold
     metrics:
       schema: http
       #port: 30000
@@ -63,6 +67,10 @@ pools:
   - name: example_pool2
     partition: Common
     engine_type: sglang
+    fallback:
+      pool_fallback: true  # Pool level fallback switch, default is false. If true, API will return "fallback" directly
+      # member_running_req_threshold: 25.0  # Uncomment to enable member filtering by running requests
+      # member_waiting_queue_threshold: 10.0  # Uncomment to enable member filtering by waiting queue
     metrics:
       schema: http
       #port: 30001
