@@ -1,0 +1,101 @@
+# F5 LLM Inference Gateway Scheduler Configuration File - Fallback功能示例  
+# 这个配置文件展示如何使用新的fallback功能
+
+global:
+  interval: 5
+  api_port: 8080
+  api_host: 0.0.0.0
+  log_level: INFO
+
+f5:
+  host: 192.168.1.100
+  port: 443
+  username: admin
+  password_env: F5_PASSWORD
+
+scheduler:
+  pool_fetch_interval: 10
+  metrics_fetch_interval: 3000
+
+modes:
+  - name: s1_enhanced
+    w_a: 0.2
+    w_b: 0.8
+
+pools:
+  # 正常运行的Pool - 使用成员过滤
+  - name: production_pool
+    partition: Common
+    engine_type: vllm
+    fallback:
+      pool_fallback: false  # 正常调度模式
+      member_running_req_threshold: 20.0  # 过载member自动排除
+      member_waiting_queue_threshold: 15.0  # 等待队列过多时排除
+    metrics:
+      schema: http
+      path: /metrics
+      timeout: 4
+      APIkey: your-api-key
+      metric_user: user1
+      metric_pwd_env: METRIC_PWD
+
+  # 测试Pool - 宽松的阈值设置
+  - name: test_pool
+    partition: TestPartition
+    engine_type: sglang
+    fallback:
+      pool_fallback: false
+      member_running_req_threshold: 50.0  # 测试环境使用更宽松的阈值
+      # member_waiting_queue_threshold: 不设置表示不限制等待队列
+    metrics:
+      schema: http
+      path: /metrics
+      timeout: 4
+      APIkey: test-api-key
+      metric_user: test_user
+      metric_pwd_env: METRIC_PWD
+
+  # 维护中的Pool - pool_fallback开启，直接返回fallback
+  - name: maintenance_pool
+    partition: Common
+    engine_type: vllm
+    fallback:
+      pool_fallback: true   # 开启Pool级别fallback模式
+      # 阈值设置在pool_fallback=true时会被忽略，但保留便于维护结束后恢复
+      member_running_req_threshold: 15.0
+      member_waiting_queue_threshold: 10.0
+    metrics:
+      schema: http
+      path: /metrics
+      timeout: 4
+      APIkey: maintenance-api-key
+      metric_user: maintenance_user
+      metric_pwd_env: METRIC_PWD
+
+  # 备用Pool - 只使用Pool级别控制
+  - name: backup_pool
+    partition: Common
+    engine_type: sglang
+    fallback:
+      pool_fallback: false  # 可以通过配置热更新动态切换为true
+      # 不设置member阈值，表示不进行成员级别过滤
+    metrics:
+      schema: http
+      path: /metrics
+      timeout: 4
+      APIkey: backup-api-key
+      metric_user: backup_user
+      metric_pwd_env: METRIC_PWD
+
+# fallback功能说明:
+# 1. pool_fallback默认为false，不影响现有配置
+# 2. 当pool_fallback设置为true时，对该pool的/scheduler/select API请求将直接返回"fallback"
+# 3. 成员阈值过滤基于原始metrics值，自动排除过载成员
+# 4. 即使pool_fallback=true，该pool的metrics收集和分值计算仍然正常进行
+# 5. 支持配置热更新，可以动态调整所有fallback配置
+# 6. 适用场景：
+#    - Pool维护期间临时启用pool_fallback
+#    - Pool故障时快速切换到fallback模式
+#    - 生产环境中使用阈值过滤自动排除过载成员
+#    - 测试环境中模拟fallback场景
+#    - 灰度发布时的流量控制 

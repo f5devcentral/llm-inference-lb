@@ -83,6 +83,13 @@ class APIServer:
                     f"partition={request.partition}, members={request.members}"
                 )
                 
+                # Check if pool has pool_fallback enabled
+                from core.models import get_pool_by_key
+                pool = get_pool_by_key(request.pool_name, request.partition)
+                if pool and pool.pool_fallback:
+                    self.logger.info(f"Pool {request.pool_name} has pool_fallback enabled, returning 'fallback'")
+                    return "fallback"
+                
                 # Call scheduler to select optimal member
                 selected = await self.scheduler.select_optimal_member(
                     request.pool_name,

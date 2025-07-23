@@ -51,14 +51,20 @@ class PoolMember:
 
 class Pool:
     """Pool data model"""
-    __slots__ = ("name", "partition", "engine_type", "members", "_consecutive_failures")
+    __slots__ = ("name", "partition", "engine_type", "members", "_consecutive_failures", 
+                 "pool_fallback", "member_running_req_threshold", "member_waiting_queue_threshold")
     
-    def __init__(self, name: str, partition: str, engine_type: EngineType, members: List[PoolMember] = None):
+    def __init__(self, name: str, partition: str, engine_type: EngineType, members: List[PoolMember] = None, 
+                 pool_fallback: bool = False, member_running_req_threshold: Optional[float] = None, 
+                 member_waiting_queue_threshold: Optional[float] = None):
         self.name: str = name
         self.partition: str = partition
         self.engine_type: EngineType = engine_type
         self.members: List[PoolMember] = members or []
         self._consecutive_failures: int = 0  # Consecutive fetch failure count
+        self.pool_fallback: bool = pool_fallback  # Pool level fallback switch
+        self.member_running_req_threshold: Optional[float] = member_running_req_threshold  # Running request threshold
+        self.member_waiting_queue_threshold: Optional[float] = member_waiting_queue_threshold  # Waiting queue threshold
     
     def update_members_smartly(self, new_members: List[PoolMember]) -> None:
         """Smartly update member list, preserving existing members' score values"""

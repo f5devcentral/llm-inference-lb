@@ -69,11 +69,20 @@ class MetricsConfig:
 
 
 @dataclass
+class FallbackConfig:
+    """Fallback configuration"""
+    pool_fallback: bool = False  # Pool level fallback switch, default is off
+    member_running_req_threshold: Optional[float] = None  # Running request threshold for member filtering
+    member_waiting_queue_threshold: Optional[float] = None  # Waiting queue threshold for member filtering
+
+
+@dataclass
 class PoolConfig:
     """Pool configuration"""
     name: str = ""
     partition: str = "Common"
     engine_type: str = ""
+    fallback: FallbackConfig = field(default_factory=FallbackConfig)
     metrics: MetricsConfig = field(default_factory=MetricsConfig)
 
 
@@ -232,6 +241,20 @@ class ConfigLoader:
         
         # Optional configuration
         pool.partition = pool_data.get('partition', 'Common')
+        
+        # Parse fallback configuration
+        if 'fallback' in pool_data:
+            fallback_data = pool_data['fallback']
+            pool.fallback.pool_fallback = fallback_data.get('pool_fallback', False)
+            
+            # Parse member thresholds
+            running_threshold = fallback_data.get('member_running_req_threshold')
+            if running_threshold is not None:
+                pool.fallback.member_running_req_threshold = float(running_threshold)
+            
+            waiting_threshold = fallback_data.get('member_waiting_queue_threshold')
+            if waiting_threshold is not None:
+                pool.fallback.member_waiting_queue_threshold = float(waiting_threshold)
         
         # Parse metrics configuration
         if 'metrics' in pool_data:

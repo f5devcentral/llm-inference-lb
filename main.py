@@ -295,11 +295,25 @@ class SchedulerApp:
             new_pool_config = new_pool_map[pool_key]
             
             # Check for substantive changes
-            if old_pool_config.engine_type != new_pool_config.engine_type:
-                existing_pool = get_pool_by_key(new_pool_config.name, new_pool_config.partition)
-                if existing_pool:
+            existing_pool = get_pool_by_key(new_pool_config.name, new_pool_config.partition)
+            if existing_pool:
+                # Update engine_type if changed
+                if old_pool_config.engine_type != new_pool_config.engine_type:
                     existing_pool.engine_type = EngineType(new_pool_config.engine_type)
                     self.logger.info(f"Updated Pool {pool_key} engine_type: {new_pool_config.engine_type}")
+                
+                # Update fallback configuration if changed
+                if old_pool_config.fallback.pool_fallback != new_pool_config.fallback.pool_fallback:
+                    existing_pool.pool_fallback = new_pool_config.fallback.pool_fallback
+                    self.logger.info(f"Updated Pool {pool_key} pool_fallback: {new_pool_config.fallback.pool_fallback}")
+                
+                if old_pool_config.fallback.member_running_req_threshold != new_pool_config.fallback.member_running_req_threshold:
+                    existing_pool.member_running_req_threshold = new_pool_config.fallback.member_running_req_threshold
+                    self.logger.info(f"Updated Pool {pool_key} member_running_req_threshold: {new_pool_config.fallback.member_running_req_threshold}")
+                
+                if old_pool_config.fallback.member_waiting_queue_threshold != new_pool_config.fallback.member_waiting_queue_threshold:
+                    existing_pool.member_waiting_queue_threshold = new_pool_config.fallback.member_waiting_queue_threshold
+                    self.logger.info(f"Updated Pool {pool_key} member_waiting_queue_threshold: {new_pool_config.fallback.member_waiting_queue_threshold}")
             
             # metrics configuration changes will be automatically applied on next collection
             if old_pool_config.metrics != new_pool_config.metrics:
@@ -583,7 +597,10 @@ class SchedulerApp:
                             name=pool_config.name,
                             partition=pool_config.partition,
                             engine_type=engine_type,
-                            members=new_members
+                            members=new_members,
+                            pool_fallback=pool_config.fallback.pool_fallback,
+                            member_running_req_threshold=pool_config.fallback.member_running_req_threshold,
+                            member_waiting_queue_threshold=pool_config.fallback.member_waiting_queue_threshold
                         )
                         
                         # Add to memory
