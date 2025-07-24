@@ -20,6 +20,7 @@ An intelligent scheduler for LLM inference gateway, designed to work with F5 LTM
 - **Configuration Hot Reload**: Supports runtime configuration updates
 - **Comprehensive Logging**: Detailed debugging and runtime logs
 - **Weighted Random Selection**: Score-based probabilistic selection algorithm
+- **Manual or automatic fallback mechanisms**: can be applied in scenarios such as load balancing algorithm fallback for inference servers, service backup, maintenance control, version A/B rollout, and cross-region inference traffic scheduling.
 - **Performance Analysis**: Provides selection process simulation and probability analysis interfaces
 
 ## Project Structure
