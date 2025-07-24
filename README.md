@@ -56,6 +56,19 @@ scheduler-project/
 
 ## Installation and Deployment
 
+### Prerequisites
+
+> Set up F5 BIG-IP: 
+>
+> - http standard vs
+> - optional: session persistence (source ip or based on session/cookie, depends your real case)
+> - apply the irule in the [docs/F5-irule](./docs/F5-irule) (change related variables to yours)
+> - set default inference pool and/or fallback inference pool(depends your needs)
+> - set least conn LB for the pool
+> - create a guest account that can list these pools on the BIG-IP
+>
+> Set up your inference engine correctly. Currently offcial support vLLM, SGlang.  For xInference it is WIP for now.
+
 ### 1. Environment Requirements
 
 - Python 3.8+
