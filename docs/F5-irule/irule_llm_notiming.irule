@@ -1,0 +1,195 @@
+proc split_scheduler { debug pool_name } {
+    if { [active_members $pool_name] != 1 } {
+        if { $debug } { log local0.debug "No healthy scheduler or more than 1 scheduler member, exiting - fallback LB" }
+        return ""
+    }
+    set sched_entry [lindex [active_members -list $pool_name] 0]
+    set sched_dest  [string map {" " ":"} $sched_entry]
+    return $sched_dest
+}
+proc build_sched_payload { debug pool_name partition} {
+    set raw_members [active_members -list $pool_name]
+    if {[llength $raw_members] == 0} { 
+        if { $debug } { log local0.debug "No healthy LLM member, exiting - enter LB_FAILED event and send TCP RESET to client" }
+        return "" 
+    }
+    set quoted_members [list]
+    foreach m $raw_members {
+        set ip_port [string map {" " ":"} $m]
+        lappend quoted_members "\"$ip_port\""
+    }
+    set members_csv [join $quoted_members ,]
+    set json_payload [format {"pool_name":"%s","partition":"%s","members":[%s]} $pool_name $partition $members_csv]
+    set json_payload "\{$json_payload\}"
+    return $json_payload
+}
+
+proc http_req { debug {side_timeout_ms 20} {destination ""} {url "/scheduler/select"} {payload ""} } {
+    # log local0.debug "proc http_req, debug: $debug, side_timeout_ms: $side_timeout_ms, destination: $destination, url: $url, payload: $payload"
+
+    set payload_length [string length $payload]
+    # Create the basic request string
+    set http_request "POST $url HTTP/1.0\r\nContent-Type: application/json\r\nContent-Length: $payload_length\r\nConnection: close\r\n\r\n$payload"
+    if { $debug } { log local0.debug "proc http_req, http_request: $http_request" }
+
+    set response [call /Common/irule_llm::request $debug $side_timeout_ms $destination $http_request]
+    if { $debug } { log local0.debug "proc http_req, response: $response" }
+    
+    if { [lindex $response 0] == 1 } {
+        # There was an error, return error
+        if { $debug } { log local0.debug "proc http_req, error response $response" }
+        return [list 0 0 ]
+    } else {
+        # An HTTP response which we need to decode
+        set data [lindex $response 1]
+        if { $debug } { log local0.debug "proc http_req, data response [string length $data]B" }
+        
+        # First, split it into headers and body based on \r\n\r\n
+        set split [string first "\r\n\r\n" $data ]
+
+        set head_string [string map [list "\r\n" "\n"] [string range $data 0 $split]] 
+        set head_list [split $head_string "\n"]
+        # Retrieve the header line eg HTTP/1.1 200 OK
+        set header_line [lindex $head_list 0]
+        set status_code [lindex [split $header_line " "] 1]
+        if { $debug } { log local0.debug "proc http_req, status code $status_code" }
+        # Handle returned headers
+        
+        if { $status_code == 200 } {
+            # Increment by 4 to skip the \r\n\r\n
+            incr split 4
+            set best_node     [string range $data $split end]
+            
+            if { $debug } { log local0.debug "best_node: $best_node" }
+            
+            # Check if the response payload is "none", treat it as error
+            if { $best_node eq "none" } {
+                if { $debug } { log local0.debug "Response payload is 'none', treating as error response" }
+                set body "payload is none"
+                set best_node 0
+                set status_code 0
+            }
+
+            # Check if the response payload is "fallback", treat it as speical status code 1
+            if { $best_node eq "fallback" } {
+                if { $debug } { log local0.debug "Response payload is 'fallback', treating as special response" }
+                set body "payload is fallback"
+                set best_node 0
+                set status_code 1
+            }
+
+        } else {
+            set body "error response code, $status_code"
+            set best_node 0
+            set status_code 0
+        }
+        return [ list $best_node $status_code ]
+    }
+}
+proc request { debug {side_timeout_ms 20} {destination ""}  {payload ""} } {
+    # log local0.debug "proc request, debug: $debug, side_timeout_ms: $side_timeout_ms, destination: $destination, payload: $payload"
+    set idle 1
+    
+    # Try to connect
+    set conn_status ""
+    if {[catch { connect -protocol TCP -idle $idle -status conn_status $destination } conn] || ($conn eq "") } {
+        set error "proc request, connect to $destination failed, conn_status: $conn_status, error: $conn"
+        if { $debug } { log local0.debug "proc request, connection failed: $error" }
+        return [list 1 $error]
+    }
+        
+    if { $debug } { log local0.debug "proc request, connected to $destination, conn_status: $conn_status, conn: $conn, idle: $idle" }
+   
+    # Send data
+    set send_status ""
+    if {[catch { send -status send_status $conn $payload } sent] || ($send_status ne "sent") || ($sent != [string length $payload]) } {
+        set error "Sending to $destination failed status: $send_status error: $sent"
+        if { $debug } { log local0.debug "proc request, send failed: $error" }
+        catch {close $conn}
+        return [list 1 $error]
+    }
+    if { $debug } { log local0.debug "proc request, sent $payload to $destination status: $send_status" }
+        
+    # Check received data
+    set received_data ""
+    append received_data [recv -timeout $side_timeout_ms -status recv_status 1000 $conn]
+    if { $debug } { log local0.debug "proc request, received_data: $received_data, recv_status: $recv_status, length: [string length $received_data]B" }
+    return [list 0 $received_data]
+}
+
+when HTTP_REQUEST {
+    # --- Configuration constants --- #
+    # debug                     0: disable, 1: enable
+    # pool_tblb_sched           pool name of scheduler
+    # pool_backend_llm          pool name of llm backend, you can set this as default pool
+    # pool_fallback_llm         pool name of fallback, you can set this as backup pool, AB release pool etc. If you dont need fallback, just set it as same as pool_backend_llm.
+    # sched_uri                 scheduler query uri, default "/scheduler/select"
+    # side_timeout_ms           sideband receive timeout
+    # call_interval_ms          scheduler polling period
+    # --- Configuration constants --- #
+
+    set debug                   0
+    set partition               "Common"
+    set pool_tblb_sched         "pool_tblb_sched"
+    set pool_backend_llm        "Pool_vllm"
+    set pool_fallback_llm       "Pool_fallback_vllm"
+    set sched_uri               "/scheduler/select"
+    set side_timeout_ms         "500"
+    set call_interval_ms        "1"
+    
+    # ── Rate-limit sideband: at most once every $call_interval_ms ─────────────
+    set vs_name                 [virtual name]
+    set current_time            [clock clicks -milliseconds]
+    set last_call_time          [table lookup -notouch "last_call_time_$vs_name"]
+
+    if {($last_call_time eq "") || ([expr {$current_time - $last_call_time}] >= $call_interval_ms)} { 
+        if { $debug } { log local0.debug "Executing API call to get the nexthop." }
+        table set "last_call_time_$vs_name" $current_time 60
+
+        # 1. Pick scheduler endpoint
+        set sched_endpoint [call /Common/irule_llm::split_scheduler $debug $pool_tblb_sched]
+        if { $sched_endpoint == "" } { return }
+        if { $debug } { log local0.debug "1. sched_endpoint: $sched_endpoint" }
+
+        # 2. payload = active LLM members
+        set sched_payload [call /Common/irule_llm::build_sched_payload $debug $pool_backend_llm $partition]
+        if { $sched_payload == "" } { return }
+        if { $debug } { log local0.debug "2. sched_payload: $sched_payload" }
+
+        # 3. POST to scheduler
+        #set sched_start_time [clock clicks -milliseconds]
+        set sched_best_node [call /Common/irule_llm::http_req $debug $side_timeout_ms $sched_endpoint $sched_uri $sched_payload]
+        set llm_nexthop     [lindex $sched_best_node 0]
+        if { $debug } { log local0.debug "sched_best_node: $sched_best_node, llm_nexthop: $llm_nexthop" }
+        table set "llm_nexthop_$vs_name" $llm_nexthop 60
+
+        # 4. Send request to the best node.
+        if { $llm_nexthop != 0 && $llm_nexthop ne "" } {
+            pool $pool_backend_llm member $llm_nexthop
+        } else {
+            set status_code [lindex $sched_best_node 1]
+            if { $status_code == 1 } {
+                if { $debug } { log local0.debug "Scheduler returned fallback status (status_code=1), using fallback pool" }
+                # if you dont want to use fallback pool, you can set any other action here, like return custom response to client.
+                pool $pool_fallback_llm
+            } else {
+                if { $debug } { log local0.debug "Scheduler returned ($llm_nexthop) with status_code=$status_code, so send to default pool LB method" }
+                pool $pool_backend_llm
+            }
+        }
+        
+        # 记录结束时间并计算总耗时
+        #set sched_end_time [clock clicks -milliseconds]
+        #set total_duration [expr {$sched_end_time - $sched_start_time}]
+        #log local0.info "Scheduler total duration: ${total_duration}ms (from connection to pool selection)"
+    } else {
+        set llm_nexthop [table lookup -notouch "llm_nexthop_$vs_name" ]
+        if { $llm_nexthop == "" || $llm_nexthop == 0 } { 
+            if { $debug } { log local0.debug "query failed, nexthop is invalid ($llm_nexthop), fallback to default pool LB method" }
+            pool $pool_backend_llm
+            return 
+        }
+        if { $debug } { log local0.debug "Skip this time API call and use the last result, nexthop: $llm_nexthop" }
+        pool $pool_backend_llm member $llm_nexthop
+    }
+}
