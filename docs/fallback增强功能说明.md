@@ -96,7 +96,7 @@ graph TD
 
 ## 📝 配置示例
 
-### 示例1：生产环境 - 严格阈值控制
+### 示例1：
 
 ```yaml
 - name: production_pool
@@ -104,14 +104,14 @@ graph TD
   engine_type: vllm
   fallback:
     pool_fallback: false
-    member_running_req_threshold: 15.0   # 严格限制
+    member_running_req_threshold: 15.0   
     member_waiting_queue_threshold: 10.0
   metrics:
     schema: http
     path: /metrics
 ```
 
-### 示例2：测试环境 - 宽松设置
+### 示例2：
 
 ```yaml
 - name: test_pool
@@ -119,14 +119,14 @@ graph TD
   engine_type: sglang
   fallback:
     pool_fallback: false
-    member_running_req_threshold: 50.0   # 宽松阈值
+    member_running_req_threshold: 50.0   
     # 不设置waiting_queue阈值
   metrics:
     schema: http
     path: /metrics
 ```
 
-### 示例3：维护模式 - Pool级别fallback
+### 示例3： Pool级别fallback
 
 ```yaml
 - name: maintenance_pool
@@ -134,7 +134,7 @@ graph TD
   engine_type: vllm
   fallback:
     pool_fallback: true                  # Pool级别fallback优先
-    # 阈值设置会被忽略，但保留便于维护结束后恢复
+    # 阈值设置会被忽略，可保留便于维护结束后恢复
     member_running_req_threshold: 20.0
     member_waiting_queue_threshold: 15.0
   metrics:
@@ -156,18 +156,6 @@ graph TD
     path: /metrics
 ```
 
-## 🔧 配置格式
-
-所有fallback相关配置都统一在`fallback`节点下：
-
-```yaml
-- name: example_pool
-  fallback:
-    pool_fallback: false                    # Pool级别控制
-    member_running_req_threshold: 20.0      # 成员级别过滤
-    member_waiting_queue_threshold: 15.0    # 成员级别过滤
-```
-
 ## 🔄 配置热更新
 
 所有fallback配置都支持热更新：
@@ -182,77 +170,22 @@ INFO - Updated Pool production_pool:Common member_running_req_threshold: 25.0
 INFO - Updated Pool production_pool:Common member_waiting_queue_threshold: 20.0
 ```
 
-## 📊 运维建议
+## 📊 提示
 
-### 1. 阈值设置建议
+1. 当设置为Pool级别的fallback时候，F5向调度器查询关于该pool的最优节点查询都会得到fallback的返回内容，此时F5侧iRule可以根据该返回做出不同的决定，如：
 
-| 环境类型 | running_req阈值 | waiting_queue阈值 | 说明 |
-|----------|-----------------|-------------------|------|
-| 生产环境 | 15-25 | 10-20 | 严格控制，确保性能 |
-| 测试环境 | 30-50 | 20-30 | 相对宽松，便于测试 |
-| 开发环境 | 不设置 | 不设置 | 无限制，便于开发调试 |
+- 直接返回友好性错误内容。可用于临时关停整个推理资源池场景，例如运维维护、紧急停机等。
+- 将请求直接按照普通的负载均衡算法进行分配。可用于临时暂停调度器的优选工作。
+- 将请求发送到其它推理资源池。实现推理资源的备份切换、跨中心调度、模型资源池的AB发布。
 
-### 2. 监控指标
 
-建议监控以下指标：
-- 被阈值过滤的member数量
-- Pool级别fallback的触发频率
-- 过滤后剩余member数量
 
-### 3. 故障处理流程
+2. 如设置member级别的fallback阀值，当任意一个指标超过对应阀值时，该member将不会被选为最优节点。该功能可实现如下场景：
 
-1. **发现Pool异常** → 立即开启`pool_fallback: true`
-2. **排查问题** → 分析metrics和日志
-3. **调整阈值** → 根据实际情况优化阈值设置
-4. **恢复服务** → 关闭pool_fallback，验证正常
+- 巧用阀值，可实现临时下线某个节点
+- 巧用阀值，可实现让某个节点始终处于低水位工作
+- 正确设置阀值，让繁忙节点临时自动被排除，从而避免繁忙节点过于繁忙
 
-## 🧪 测试验证
-
-项目包含完整的测试用例 (`tests/test_fallback_with_thresholds.py`)：
-
-```bash
-# 运行测试
-python3 tests/test_fallback_with_thresholds.py
-```
-
-测试覆盖：
-- ✅ 配置结构解析
-- ✅ Pool模型属性
-- ✅ API层面逻辑
-- ✅ 阈值过滤功能
-- ✅ 优先级验证
-
-## 📈 性能影响
-
-### 新功能的性能影响：
-
-1. **配置解析**：增加少量配置解析时间（微秒级）
-2. **阈值过滤**：增加O(n)时间复杂度的member过滤（n为member数量）
-3. **内存使用**：每个Pool增加3个属性的内存开销（negligible）
-
-### 优化措施：
-
-- 过滤逻辑只在有阈值设置时执行
-- 使用原始metrics值，无需额外计算
-- 详细日志仅在debug模式下输出
-
-## 📋 总结
-
-本次fallback功能增强实现了：
-
-### ✅ 功能增强
-- **更清晰的配置结构**：逻辑分组，易于理解
-- **成员级别过滤**：自动排除过载成员
-- **完整的日志记录**：便于调试和监控
-
-### ✅ 技术特性  
-- **使用原始metrics**：准确反映实际负载情况
-- **配置热更新**：运行时动态调整
-- **完整测试覆盖**：确保功能可靠性
-
-### ✅ 运维友好
-- **层次化控制**：Pool级别 + Member级别
-- **灵活配置**：可独立使用或组合使用  
-- **详细日志**：完整的过滤和选择过程记录
-
-这些增强功能为F5 LLM推理网关调度器提供了更强大和灵活的负载控制能力，能够更好地应对各种生产环境的需求。 
+>  需要注意的是running request一般可以用于防止节点进入高水位工作状态，即可用来设置一个较为统一的平衡状态，保证每个节点都不超过水位设置。如推理资源池内的节点本身性能差异较大，需注意这个指标是水桶理论中的最低点。
+>
+> waiting request一般可以直接与繁忙挂钩，设置该阀值可以避免节点产生过高的waiting queue。
