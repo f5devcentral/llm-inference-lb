@@ -24,6 +24,7 @@ class ScheduleRequest(BaseModel):
     pool_name: str = Field(..., description="Pool name")
     partition: str = Field(..., description="Partition name")
     members: List[str] = Field(..., description="Candidate member list, format: [\"ip:port\", ...]")
+    model: Optional[str] = Field(None, description="Model name (required for XInference engine type)")
 
 
 class ScheduleResponse(BaseModel):
@@ -78,23 +79,33 @@ class APIServer:
                 if not request.members:
                     raise InvalidRequestError("members cannot be empty")
                 
+                # Enhanced logging with model information
+                model_info = f", model={request.model}" if request.model else ""
                 self.logger.info(
                     f"Received schedule request: pool={request.pool_name}, "
-                    f"partition={request.partition}, members={request.members}"
+                    f"partition={request.partition}, members={request.members}{model_info}"
                 )
                 
                 # Check if pool has pool_fallback enabled
-                from core.models import get_pool_by_key
+                from core.models import get_pool_by_key, EngineType
                 pool = get_pool_by_key(request.pool_name, request.partition)
                 if pool and pool.pool_fallback:
                     self.logger.info(f"Pool {request.pool_name} has pool_fallback enabled, returning 'fallback'")
                     return "fallback"
                 
+                # Validate XInference requirements
+                if pool and pool.engine_type == EngineType.XINFERENCE:
+                    if not request.model:
+                        self.logger.warning(f"XInference request for pool {request.pool_name} missing model name")
+                        return "request_has_no_model_name"
+                    self.logger.info(f"XInference request for pool {request.pool_name}, model: {request.model}")
+                
                 # Call scheduler to select optimal member
                 selected = await self.scheduler.select_optimal_member(
                     request.pool_name,
                     request.partition,
-                    request.members
+                    request.members,
+                    request.model
                 )
                 
                 result = selected if selected else "none"
@@ -159,6 +170,32 @@ class APIServer:
             """Health check"""
             return {"status": "healthy", "message": "Scheduler running normally"}
         
+        @app.get("/api_key_health")
+        async def api_key_health_check():
+            """API key sync健康状态检查"""
+            try:
+                # 通过全局变量或其他方式获取scheduler app实例
+                from main import _scheduler_app_instance
+                
+                if _scheduler_app_instance and hasattr(_scheduler_app_instance, 'api_key_manager'):
+                    if _scheduler_app_instance.api_key_manager:
+                        # 获取详细健康状态
+                        health_status = _scheduler_app_instance.api_key_manager.get_pool_health_status()
+                        summary = _scheduler_app_instance.api_key_manager.get_sync_summary()
+                        
+                        return {
+                            "summary": summary,
+                            "pools": health_status
+                        }
+                    else:
+                        return {"status": "disabled", "message": "API key manager not initialized"}
+                else:
+                    return {"status": "disabled", "message": "API key sync not configured"}
+                    
+            except Exception as e:
+                self.logger.error(f"API key health check exception: {e}")
+                return {"status": "error", "message": str(e)}
+        
         @app.post("/pools/{pool_name}/{partition}/simulate")
         async def simulate_selection(
             pool_name: str, 
@@ -169,7 +206,7 @@ class APIServer:
             """Simulate selection process (for testing)"""
             try:
                 results = await self.scheduler.simulate_selection(
-                    pool_name, partition, request.members, iterations
+                    pool_name, partition, request.members, iterations, request.model
                 )
                 return {"results": results, "iterations": iterations}
                 
@@ -187,7 +224,7 @@ class APIServer:
             """Advanced probability analysis - Detailed analysis of selection accuracy and bias"""
             try:
                 analysis = await self.scheduler.analyze_selection_accuracy(
-                    pool_name, partition, request.members, iterations
+                    pool_name, partition, request.members, iterations, request.model
                 )
                 return analysis
                 

@@ -77,6 +77,34 @@ class FallbackConfig:
 
 
 @dataclass
+class ModelApiKeyConfig:
+    """Model API Key configuration for XInference engine type"""
+    path: str = "/v1/cluster/authorizations"
+    f5datagroup: str = ""
+    timeout: int = 4
+    api_key_sync_interval: int = 300
+    APIkey: Optional[str] = None
+    apikey_user: Optional[str] = None
+    apikey_pwd_env: Optional[str] = None
+    # 故障处理配置
+    failure_mode: str = "preserve"           # preserve/clear/smart
+    max_failures_threshold: int = 10         # 智能模式下的失败阈值
+    failure_timeout_hours: float = 2.0       # 智能模式下的超时时间
+
+
+@dataclass
+class EngineVariantConfig:
+    """Engine variant metrics key configuration
+    
+    Used to define custom metrics keys for engine variants like vllm_ascend, vllm_musa, sglang_xxx
+    """
+    variant_name: str = ""  # Variant name, e.g., vllm_ascend, vllm-mlu, sglang_xxx
+    waiting_queue: Optional[str] = None  # Custom waiting_queue metric key
+    cache_usage: Optional[str] = None    # Custom cache_usage metric key
+    running_req: Optional[str] = None    # Custom running_req metric key
+
+
+@dataclass
 class PoolConfig:
     """Pool configuration"""
     name: str = ""
@@ -84,6 +112,7 @@ class PoolConfig:
     engine_type: str = ""
     fallback: FallbackConfig = field(default_factory=FallbackConfig)
     metrics: MetricsConfig = field(default_factory=MetricsConfig)
+    model_APIkey: Optional[ModelApiKeyConfig] = None  # Only for XInference engine type
 
 
 @dataclass
@@ -94,10 +123,16 @@ class AppConfig:
     scheduler: SchedulerConfig = field(default_factory=SchedulerConfig)
     modes: List[ModeConfig] = field(default_factory=lambda: [ModeConfig()])
     pools: List[PoolConfig] = field(default_factory=list)
+    # Engine variant metrics keys configuration
+    # Structure: {variant_name: {waiting_queue: str, cache_usage: str, running_req: str}}
+    engine_metrics_keys: Dict[str, Dict[str, str]] = field(default_factory=dict)
 
 
 class ConfigLoader:
     """Configuration loader"""
+    
+    # Supported engine types
+    SUPPORTED_ENGINE_TYPES = ['vllm', 'sglang', 'xinference']
     
     def __init__(self, config_file: str = "config/scheduler-config.yaml"):
         self.config_file = config_file
@@ -211,6 +246,10 @@ class ConfigLoader:
                 
                 config.modes.append(mode)
         
+        # Parse engines_metrics_keys configuration
+        if 'engines_metrics_keys' in config_data:
+            config.engine_metrics_keys = self._parse_engine_metrics_keys(config_data['engines_metrics_keys'])
+        
         # Parse pools configuration
         if 'pools' in config_data:
             config.pools = []
@@ -226,6 +265,51 @@ class ConfigLoader:
         self._config = config
         return config
     
+    def _parse_engine_metrics_keys(self, engine_metrics_data: Dict[str, Any]) -> Dict[str, Dict[str, str]]:
+        """Parse engines_metrics_keys configuration
+        
+        Args:
+            engine_metrics_data: Raw engines_metrics_keys configuration from YAML
+            
+        Returns:
+            Parsed configuration: {variant_name: {waiting_queue: str, cache_usage: str, running_req: str}}
+        """
+        result = {}
+        
+        if not engine_metrics_data or not isinstance(engine_metrics_data, dict):
+            return result
+        
+        for variant_name, variant_config in engine_metrics_data.items():
+            if not isinstance(variant_config, dict):
+                self.logger.warning(f"Invalid engines_metrics_keys configuration for '{variant_name}', expected dict")
+                continue
+            
+            # Validate variant name starts with known engine type prefix
+            lower_name = variant_name.lower()
+            if not (lower_name.startswith('vllm') or lower_name.startswith('sglang')):
+                self.logger.warning(
+                    f"Variant name '{variant_name}' does not start with 'vllm' or 'sglang', skipping. "
+                    f"Note: xinference variants are not supported."
+                )
+                continue
+            
+            # Parse metrics keys (all optional)
+            parsed_config = {}
+            for key_type in ['waiting_queue', 'cache_usage', 'running_req']:
+                if key_type in variant_config and variant_config[key_type]:
+                    parsed_config[key_type] = str(variant_config[key_type])
+            
+            if parsed_config:
+                result[variant_name] = parsed_config
+                self.logger.debug(f"Parsed engine variant '{variant_name}': {parsed_config}")
+            else:
+                self.logger.warning(f"Variant '{variant_name}' has no valid metrics keys configured, skipping")
+        
+        if result:
+            self.logger.info(f"Loaded engines_metrics_keys configuration: {', '.join(result.keys())}")
+        
+        return result
+    
     def _parse_pool_config(self, pool_data: Dict[str, Any]) -> PoolConfig:
         """Parse Pool configuration"""
         pool = PoolConfig()
@@ -238,6 +322,15 @@ class ConfigLoader:
             raise ConfigurationError("Pool configuration missing name field")
         if not pool.engine_type:
             raise ConfigurationError(f"Pool {pool.name} missing engine_type field")
+        
+        # Validate engine_type
+        if pool.engine_type.lower() not in self.SUPPORTED_ENGINE_TYPES:
+            raise ConfigurationError(
+                f"Pool {pool.name} has unsupported engine_type '{pool.engine_type}'. "
+                f"Supported types: {', '.join(self.SUPPORTED_ENGINE_TYPES)}. "
+                f"For vllm variants (vllm_ascend, vllm_musa, etc.), use 'vllm' as engine_type "
+                f"and configure the variant in 'engines_metrics_keys' section."
+            )
         
         # Optional configuration
         pool.partition = pool_data.get('partition', 'Common')
@@ -284,6 +377,43 @@ class ConfigLoader:
         else:
             self.logger.debug(f"Pool {pool.name} no metrics configuration")
         
+        # Parse model_APIkey configuration (only for XInference engine type)
+        if 'model_APIkey' in pool_data:
+            if pool.engine_type.lower() == 'xinference':
+                model_apikey_data = pool_data['model_APIkey']
+                pool.model_APIkey = ModelApiKeyConfig()
+                
+                # Required fields
+                pool.model_APIkey.path = model_apikey_data.get('path', '/v1/cluster/authorizations')
+                pool.model_APIkey.f5datagroup = model_apikey_data.get('f5datagroup', '')
+                
+                if not pool.model_APIkey.f5datagroup:
+                    raise ConfigurationError(f"Pool {pool.name} with XInference engine type missing f5datagroup field in model_APIkey")
+                
+                # Optional fields
+                pool.model_APIkey.timeout = int(model_apikey_data.get('timeout', 4))
+                pool.model_APIkey.api_key_sync_interval = int(model_apikey_data.get('api_key_sync_interval', 300))
+                pool.model_APIkey.APIkey = model_apikey_data.get('APIkey')
+                pool.model_APIkey.apikey_user = model_apikey_data.get('apikey_user')
+                pool.model_APIkey.apikey_pwd_env = model_apikey_data.get('apikey_pwd_env')
+                
+                # Failure handling configuration
+                pool.model_APIkey.failure_mode = model_apikey_data.get('failure_mode', 'preserve')
+                pool.model_APIkey.max_failures_threshold = int(model_apikey_data.get('max_failures_threshold', 10))
+                pool.model_APIkey.failure_timeout_hours = float(model_apikey_data.get('failure_timeout_hours', 2.0))
+                
+                # Validate failure_mode
+                valid_failure_modes = ['preserve', 'clear', 'smart']
+                if pool.model_APIkey.failure_mode not in valid_failure_modes:
+                    self.logger.warning(f"Invalid failure_mode '{pool.model_APIkey.failure_mode}' for pool {pool.name}, using 'preserve'")
+                    pool.model_APIkey.failure_mode = 'preserve'
+                
+                self.logger.debug(f"Pool {pool.name} configured model_APIkey: datagroup={pool.model_APIkey.f5datagroup}, interval={pool.model_APIkey.api_key_sync_interval}s")
+            else:
+                self.logger.warning(f"Pool {pool.name} has model_APIkey configuration but engine_type is '{pool.engine_type}', not 'xinference'. Ignoring model_APIkey configuration.")
+        elif pool.engine_type.lower() == 'xinference':
+            self.logger.info(f"Pool {pool.name} is XInference type but no model_APIkey configuration found. API key synchronization will be disabled.")
+        
         return pool
     
     def get_current_config(self) -> Optional[AppConfig]:
@@ -311,4 +441,4 @@ def get_config_loader(config_file: str = "config/scheduler-config.yaml") -> Conf
 def load_config(config_file: str = "config/scheduler-config.yaml") -> AppConfig:
     """Convenient function to load configuration"""
     loader = get_config_loader(config_file)
-    return loader.load_config() 
+    return loader.load_config()

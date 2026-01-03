@@ -18,11 +18,21 @@ sys.path.insert(0, str(project_root))
 from utils.logger import init_logger, get_logger, LogLevel
 from utils.exceptions import ConfigurationError, F5ApiError, MetricsCollectionError
 from config.config_loader import load_config, get_config_loader, AppConfig, PoolConfig
-from core.models import Pool, PoolMember, EngineType, add_or_update_pool, get_all_pools, get_pool_by_key, POOLS
+from core.models import (
+    Pool, PoolMember, EngineType, add_or_update_pool, get_all_pools, get_pool_by_key, POOLS,
+    initialize_engine_metrics_candidates, refresh_engine_metrics_candidates, 
+    clear_all_pools_metrics_key_cache, get_candidates_summary
+)
 from core.f5_client import F5Client
 from core.metrics_collector import MetricsCollector
 from core.score_calculator import ScoreCalculator
+from core.f5_datagroup_client import F5DataGroupClient
+from core.api_key_manager import ApiKeyManager
 from api.server import create_api_server
+
+
+# Global scheduler app instance for API access
+_scheduler_app_instance = None
 
 
 class ConfigHotReloader:
@@ -96,6 +106,9 @@ class SchedulerApp:
         self.tasks: List[asyncio.Task] = []
         # Configuration hot reloader
         self.config_hot_reloader = None
+        # API key management components
+        self.f5_datagroup_client = None
+        self.api_key_manager = None
     
     async def initialize(self):
         """Initialize application"""
@@ -135,6 +148,17 @@ class SchedulerApp:
             
             self.metrics_collector = MetricsCollector()
             self.score_calculator = ScoreCalculator()
+            
+            # Initialize engine metrics candidates from configuration
+            initialize_engine_metrics_candidates(self.config.engine_metrics_keys)
+            summary = get_candidates_summary()
+            for engine_name, metrics_info in summary.items():
+                keys_info = ", ".join([f"{k}({v} keys)" for k, v in metrics_info.items()])
+                self.logger.info(f"Initialized ENGINE_METRICS_CANDIDATES for {engine_name.upper()}: {keys_info}")
+            
+            # Initialize API key management components
+            self.f5_datagroup_client = F5DataGroupClient(self.f5_client)
+            self.api_key_manager = ApiKeyManager(self.f5_datagroup_client)
             
             # Create API server
             self.api_server = create_api_server(
@@ -181,6 +205,7 @@ class SchedulerApp:
             'scheduler': old_config.scheduler != new_config.scheduler,
             'modes': old_config.modes != new_config.modes,
             'pools': old_config.pools != new_config.pools,
+            'engine_metrics_keys': old_config.engine_metrics_keys != new_config.engine_metrics_keys,
         }
         
         # Detailed analysis of global configuration changes
@@ -270,6 +295,27 @@ class SchedulerApp:
         else:
             self.logger.info(f"Metrics collection task configuration updated, new interval: {new_interval/1000} seconds (will take effect on next start)")
 
+    async def _restart_api_key_sync_task(self):
+        """Restart API key sync task"""
+        # Only restart if task list exists and has enough elements
+        if self.tasks and len(self.tasks) > 4:
+            # Cancel old API key sync task (index 4)
+            old_task = self.tasks[4]  # api_key_sync_task is at index 4
+            self.logger.debug("Canceling old API key sync task")
+            old_task.cancel()
+            
+            try:
+                await old_task  # Wait for task to complete fully
+            except asyncio.CancelledError:
+                pass
+            
+            # Create new task
+            new_task = asyncio.create_task(self._api_key_sync_task())
+            self.tasks[4] = new_task
+            self.logger.info("API key sync task restarted with updated configuration")
+        else:
+            self.logger.info("API key sync task configuration updated (will take effect on next start)")
+
     async def _update_pools_config(self, old_pools: List[PoolConfig], new_pools: List[PoolConfig]):
         """Smart update Pool configuration"""
         # Build mapping between old and new configurations
@@ -300,7 +346,9 @@ class SchedulerApp:
                 # Update engine_type if changed
                 if old_pool_config.engine_type != new_pool_config.engine_type:
                     existing_pool.engine_type = EngineType(new_pool_config.engine_type)
-                    self.logger.info(f"Updated Pool {pool_key} engine_type: {new_pool_config.engine_type}")
+                    # Clear metrics key cache when engine_type changes
+                    existing_pool.clear_all_members_key_cache()
+                    self.logger.info(f"Updated Pool {pool_key} engine_type: {new_pool_config.engine_type}, cleared member key cache")
                 
                 # Update fallback configuration if changed
                 if old_pool_config.fallback.pool_fallback != new_pool_config.fallback.pool_fallback:
@@ -318,6 +366,17 @@ class SchedulerApp:
             # metrics configuration changes will be automatically applied on next collection
             if old_pool_config.metrics != new_pool_config.metrics:
                 self.logger.info(f"Updated Pool {pool_key} metrics configuration")
+            
+            # model_APIkey configuration changes - update existing pool and restart sync task if needed
+            if old_pool_config.model_APIkey != new_pool_config.model_APIkey:
+                if existing_pool:
+                    existing_pool.model_APIkey = new_pool_config.model_APIkey
+                    self.logger.info(f"Updated Pool {pool_key} model_APIkey configuration")
+                
+                # If this is a XInference pool with API key config, restart sync task
+                if (new_pool_config.engine_type.lower() == 'xinference' and 
+                    new_pool_config.model_APIkey is not None):
+                    self._restart_api_key_sync_needed = True
         
         # 4. Clean up memory of Pools that exist in memory but not in configuration (avoid conflicts with fetch failure cleanup)
         # This handles configuration-level deletion, unlike fetch failure-driven cleanup
@@ -352,6 +411,9 @@ class SchedulerApp:
         changed_items = [k for k, v in changes.items() if v]
         self.logger.info(f"Starting to apply configuration changes: {changed_items}")
         
+        # Initialize API key sync restart flag
+        self._restart_api_key_sync_needed = False
+        
         try:
             # 1. Logger system hot update
             if changes.get('global_log', False):
@@ -375,8 +437,23 @@ class SchedulerApp:
             # 5. Algorithm mode update
             if changes.get('modes', False):
                 self._update_modes_config(new_config.modes)
+            
+            # 6. Engine metrics keys update
+            if changes.get('engine_metrics_keys', False):
+                self.logger.info("Detected engines_metrics_keys configuration change, refreshing candidates...")
+                refresh_engine_metrics_candidates(new_config.engine_metrics_keys)
                 
-            # 6. API port change reminder
+                # Log updated candidates summary
+                summary = get_candidates_summary()
+                for engine_name, metrics_info in summary.items():
+                    keys_info = ", ".join([f"{k}({v} keys)" for k, v in metrics_info.items()])
+                    self.logger.info(f"Refreshed ENGINE_METRICS_CANDIDATES for {engine_name.upper()}: {keys_info}")
+                
+                # Clear all member metrics key cache to trigger re-detection
+                clear_all_pools_metrics_key_cache()
+                self.logger.info("Cleared all member metrics key cache, will re-detect on next collection")
+                
+            # 8. API port change reminder
             if changes.get('global_api_port', False):
                 self.logger.warning(f"API port changed from {old_config.global_config.api_port} "
                                   f"to {new_config.global_config.api_port}, need to restart program to take effect")
@@ -385,12 +462,16 @@ class SchedulerApp:
             if changes.get('global_api_host', False):
                 self.logger.warning(f"API listening address changed from {old_config.global_config.api_host} "
                                   f"to {new_config.global_config.api_host}, need to restart program to take effect")
+            
+            # 9. Restart API key sync task if needed
+            if self._restart_api_key_sync_needed:
+                await self._restart_api_key_sync_task()
                 
-            # 7. Apply new configuration
+            # 10. Apply new configuration
             self.config = new_config
             self.logger.info("Hot configuration update completed")
             
-            # 8. Return whether to adjust monitoring interval
+            # Return whether to adjust monitoring interval
             return changes.get('global_interval', False)
             
         except Exception as e:
@@ -408,7 +489,8 @@ class SchedulerApp:
             asyncio.create_task(self._config_monitor_task()),
             asyncio.create_task(self._pool_fetch_task()),
             asyncio.create_task(self._metrics_collection_task()),
-            asyncio.create_task(self._api_server_task())
+            asyncio.create_task(self._api_server_task()),
+            asyncio.create_task(self._api_key_sync_task())
         ]
         
         self.logger.info("Scheduler started, all background tasks are running...")
@@ -437,6 +519,8 @@ class SchedulerApp:
             await self.f5_client.close()
         if self.metrics_collector:
             await self.metrics_collector.close()
+        if self.api_key_manager:
+            await self.api_key_manager.close()
         
         self.logger.info("Scheduler stopped")
     
@@ -543,102 +627,224 @@ class SchedulerApp:
         except Exception as e:
             self.logger.error(f"API server exception: {e}")
     
+    async def _api_key_sync_task(self):
+        """API key同步任务 - 支持每个pool独立间隔"""
+        self.logger.info("API key sync task started")
+        
+        # 为每个XInference pool创建独立的同步协程
+        sync_tasks = []
+        
+        for pool_config in self.config.pools:
+            if (pool_config.engine_type.lower() == 'xinference' and 
+                pool_config.model_APIkey is not None):
+                
+                self.logger.debug(f"Found XInference pool config: {pool_config.name} with API key config")
+                
+                # 直接基于配置创建同步任务，不依赖Pool对象存在
+                task = asyncio.create_task(
+                    self._sync_pool_api_keys_loop_with_config(pool_config)
+                )
+                sync_tasks.append(task)
+        
+        if sync_tasks:
+            self.logger.info(f"Started {len(sync_tasks)} API key sync loops")
+            try:
+                await asyncio.gather(*sync_tasks, return_exceptions=True)
+            except asyncio.CancelledError:
+                self.logger.info("API key sync tasks cancelled")
+        else:
+            self.logger.info("No XInference pools with API key config found")
+    
+    async def _sync_pool_api_keys_loop_with_config(self, pool_config: PoolConfig):
+        """基于配置的API key同步循环 - 不依赖Pool对象存在，智能间隔调整"""
+        config = pool_config.model_APIkey
+        configured_interval = config.api_key_sync_interval
+        # Pool发现阶段使用1秒间隔，快速响应Pool创建
+        pool_discovery_interval = 1
+        
+        self.logger.info(f"Starting API key sync for pool {pool_config.name}, "
+                        f"discovery interval: {pool_discovery_interval}s, "
+                        f"sync interval: {configured_interval}s")
+        
+        pool_discovered = False
+        
+        while self.running:
+            try:
+                # 尝试获取Pool对象
+                pool = get_pool_by_key(pool_config.name, pool_config.partition)
+                
+                if pool:
+                    # Pool存在时的处理
+                    if not pool_discovered:
+                        # 首次发现Pool
+                        pool_discovered = True
+                        self.logger.info(f"Pool {pool_config.name} discovered! Switching to configured sync interval: {configured_interval}s")
+                    
+                    # 确保Pool对象有model_APIkey配置
+                    pool.model_APIkey = pool_config.model_APIkey
+                    
+                    self.logger.debug(f"Pool {pool_config.name} found, executing API key sync")
+                    await self.api_key_manager.sync_pool_api_keys(pool)
+                    
+                    # 使用配置的同步间隔
+                    current_interval = configured_interval
+                else:
+                    # Pool不存在时的处理
+                    if pool_discovered:
+                        # Pool曾经存在但现在不存在了（可能被删除）
+                        pool_discovered = False
+                        self.logger.warning(f"Pool {pool_config.name} no longer available, switching back to discovery mode")
+                    else:
+                        # Pool尚未创建
+                        self.logger.debug(f"Pool {pool_config.name} not yet available, continuing discovery...")
+                    
+                    # 使用发现间隔
+                    current_interval = pool_discovery_interval
+                
+                # 动态间隔等待
+                await asyncio.sleep(current_interval)
+                
+                if not self.running:
+                    break
+                    
+            except asyncio.CancelledError:
+                break
+            except Exception as e:
+                self.logger.error(f"API key sync error for pool {pool_config.name}: {e}")
+                # 出错时使用较短间隔重试
+                error_retry_interval = min(60, pool_discovery_interval if not pool_discovered else configured_interval)
+                await asyncio.sleep(error_retry_interval)
+    
+    async def _sync_pool_api_keys_loop(self, pool: Pool):
+        """单个pool的API key同步循环"""
+        config = pool.model_APIkey
+        interval = config.api_key_sync_interval
+        
+        self.logger.info(f"Starting API key sync for pool {pool.name}, interval: {interval}s")
+        
+        # 首次立即同步
+        try:
+            await self.api_key_manager.sync_pool_api_keys(pool)
+        except Exception as e:
+            self.logger.error(f"Initial API key sync failed for pool {pool.name}: {e}")
+        
+        while self.running:
+            try:
+                await asyncio.sleep(interval)
+                
+                if not self.running:
+                    break
+                
+                await self.api_key_manager.sync_pool_api_keys(pool)
+                
+            except asyncio.CancelledError:
+                break
+            except Exception as e:
+                self.logger.error(f"API key sync error for pool {pool.name}: {e}")
+                await asyncio.sleep(60)  # 出错时等待1分钟
+    
     async def _fetch_all_pools(self):
         """Fetch member information for all Pools"""
         # Track successfully fetched Pools in this fetch
         successfully_fetched_pools = set()
         
-        async with self.f5_client:
-            for pool_config in self.config.pools:
-                pool_key = f"{pool_config.name}:{pool_config.partition}"
-                try:
-                    # Get latest member list from F5
-                    new_members = await self.f5_client.get_pool_members(
-                        pool_config.name,
-                        pool_config.partition
+        # Ensure shared F5 session is available; do NOT use context manager here to avoid closing it
+        await self.f5_client._ensure_session()
+        
+        for pool_config in self.config.pools:
+            pool_key = f"{pool_config.name}:{pool_config.partition}"
+            try:
+                # Get latest member list from F5
+                new_members = await self.f5_client.get_pool_members(
+                    pool_config.name,
+                    pool_config.partition
+                )
+                
+                engine_type = EngineType(pool_config.engine_type)
+                
+                # Check if Pool already exists
+                existing_pool = get_pool_by_key(pool_config.name, pool_config.partition)
+                
+                if existing_pool:
+                    # Pool exists, smartly update member list (preserve score values)
+                    # Record member information before update for comparison
+                    old_member_keys = set(f"{m.ip}:{m.port}" for m in existing_pool.members)
+                    new_member_keys = set(f"{m.ip}:{m.port}" for m in new_members)
+                    
+                    update_stats = existing_pool.update_members_smartly(new_members)
+                    
+                    self.logger.info(
+                        f"Updated Pool {pool_config.name} members: "
+                        f"preserved={update_stats['preserved']}, "
+                        f"added={update_stats['added']}, "
+                        f"removed={update_stats['removed']}, "
+                        f"total={update_stats['total']}"
                     )
                     
-                    engine_type = EngineType(pool_config.engine_type)
+                    # Record newly added members
+                    added_members = new_member_keys - old_member_keys
+                    if added_members:
+                        self.logger.info(f"Added members: {list(added_members)}")
                     
-                    # Check if Pool already exists
+                    # Record removed members
+                    removed_members = old_member_keys - new_member_keys
+                    if removed_members:
+                        self.logger.info(f"Removed members: {list(removed_members)}")
+                    
+                    # Reset consecutive failure count
+                    existing_pool._consecutive_failures = 0
+                else:
+                    # Pool doesn't exist, create new Pool
+                    pool = Pool(
+                        name=pool_config.name,
+                        partition=pool_config.partition,
+                        engine_type=engine_type,
+                        members=new_members,
+                        pool_fallback=pool_config.fallback.pool_fallback,
+                        member_running_req_threshold=pool_config.fallback.member_running_req_threshold,
+                        member_waiting_queue_threshold=pool_config.fallback.member_waiting_queue_threshold
+                    )
+                    
+                    # Set model_APIkey configuration for XInference pools
+                    if pool_config.engine_type.lower() == 'xinference' and pool_config.model_APIkey:
+                        pool.model_APIkey = pool_config.model_APIkey
+                    
+                    # Add to memory
+                    add_or_update_pool(pool)
+                    
+                    self.logger.info(f"Created new Pool {pool_config.name} with {len(new_members)} members")
+                
+                # Mark this Pool as successfully fetched
+                successfully_fetched_pools.add(pool_key)
+                
+            except Exception as e:
+                # Analyze failure type and severity
+                failure_type, should_count_failure = self._analyze_fetch_failure(e, pool_config.name)
+                
+                self.logger.error(f"Failed to fetch Pool {pool_config.name} members ({failure_type}): {e}")
+                
+                # Only count serious failures (avoid false deletions due to temporary network issues)
+                if should_count_failure:
                     existing_pool = get_pool_by_key(pool_config.name, pool_config.partition)
-                    
                     if existing_pool:
-                        # Pool exists, smartly update member list (preserve score values)
-                        # Record member information before update for comparison
-                        old_member_keys = set(f"{m.ip}:{m.port}" for m in existing_pool.members)
-                        new_member_keys = set(f"{m.ip}:{m.port}" for m in new_members)
+                        # Increase consecutive failure count
+                        if not hasattr(existing_pool, '_consecutive_failures'):
+                            existing_pool._consecutive_failures = 0
+                        existing_pool._consecutive_failures += 1
                         
-                        update_stats = existing_pool.update_members_smartly(new_members)
-                        
-                        self.logger.info(
-                            f"Updated Pool {pool_config.name} members: "
-                            f"preserved={update_stats['preserved']}, "
-                            f"added={update_stats['added']}, "
-                            f"removed={update_stats['removed']}, "
-                            f"total={update_stats['total']}"
+                        self.logger.warning(
+                            f"Pool {pool_key} consecutive serious failures {existing_pool._consecutive_failures} times (type: {failure_type})"
                         )
                         
-                        # Record newly added members
-                        added_members = new_member_keys - old_member_keys
-                        if added_members:
-                            self.logger.info(f"Added members: {list(added_members)}")
-                        
-                        # Record removed members
-                        removed_members = old_member_keys - new_member_keys
-                        if removed_members:
-                            self.logger.info(f"Removed members: {list(removed_members)}")
-                        
-                        # Reset consecutive failure count
-                        existing_pool._consecutive_failures = 0
-                    else:
-                        # Pool doesn't exist, create new Pool
-                        pool = Pool(
-                            name=pool_config.name,
-                            partition=pool_config.partition,
-                            engine_type=engine_type,
-                            members=new_members,
-                            pool_fallback=pool_config.fallback.pool_fallback,
-                            member_running_req_threshold=pool_config.fallback.member_running_req_threshold,
-                            member_waiting_queue_threshold=pool_config.fallback.member_waiting_queue_threshold
-                        )
-                        
-                        # Add to memory
-                        add_or_update_pool(pool)
-                        
-                        self.logger.info(f"Created new Pool {pool_config.name} with {len(new_members)} members")
-                    
-                    # Mark this Pool as successfully fetched
-                    successfully_fetched_pools.add(pool_key)
-                    
-                except Exception as e:
-                    # Analyze failure type and severity
-                    failure_type, should_count_failure = self._analyze_fetch_failure(e, pool_config.name)
-                    
-                    self.logger.error(f"Failed to fetch Pool {pool_config.name} members ({failure_type}): {e}")
-                    
-                    # Only count serious failures (avoid false deletions due to temporary network issues)
-                    if should_count_failure:
-                        existing_pool = get_pool_by_key(pool_config.name, pool_config.partition)
-                        if existing_pool:
-                            # Increase consecutive failure count
-                            if not hasattr(existing_pool, '_consecutive_failures'):
-                                existing_pool._consecutive_failures = 0
-                            existing_pool._consecutive_failures += 1
-                            
+                        # If consecutive failures exceed threshold, remove from memory
+                        failure_threshold = 5
+                        if existing_pool._consecutive_failures >= failure_threshold:
                             self.logger.warning(
-                                f"Pool {pool_key} consecutive serious failures {existing_pool._consecutive_failures} times (type: {failure_type})"
+                                f"Pool {pool_key} consecutive serious failures {failure_threshold} times, may have been deleted, cleaning from memory"
                             )
-                            
-                            # If consecutive failures exceed threshold, remove from memory
-                            failure_threshold = 5
-                            if existing_pool._consecutive_failures >= failure_threshold:
-                                self.logger.warning(
-                                    f"Pool {pool_key} consecutive serious failures {failure_threshold} times, may have been deleted, cleaning from memory"
-                                )
-                                del POOLS[pool_key]
-                    else:
-                        self.logger.info(f"Pool {pool_key} encountered temporary issues, not counting as failure")
+                            del POOLS[pool_key]
+                else:
+                    self.logger.info(f"Pool {pool_key} encountered temporary issues, not counting as failure")
         
         # Note: Removed configuration consistency cleanup to avoid conflicts with hot reload
         # Configuration consistency cleanup is handled in hot reload's _update_pools_config
@@ -810,7 +1016,9 @@ def setup_signal_handlers(app: SchedulerApp):
 
 async def main():
     """Main function"""
+    global _scheduler_app_instance
     app = SchedulerApp()
+    _scheduler_app_instance = app  # 设置全局实例供API访问
     
     try:
         setup_signal_handlers(app)
@@ -821,6 +1029,7 @@ async def main():
         print(f"Program exception: {e}")
     finally:
         await app.stop()
+        _scheduler_app_instance = None  # 清理全局实例
 
 
 if __name__ == "__main__":

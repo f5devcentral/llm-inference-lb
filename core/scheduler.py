@@ -14,7 +14,7 @@ sys.path.insert(0, str(project_root))
 
 from utils.logger import get_logger
 from utils.exceptions import SchedulingError
-from core.models import Pool, PoolMember, get_pool_by_key
+from core.models import Pool, PoolMember, get_pool_by_key, EngineType
 
 
 class WeightedRandomSelector:
@@ -196,11 +196,12 @@ class Scheduler:
         self,
         pool_name: str,
         partition: str,
-        candidate_members: List[str]
+        candidate_members: List[str],
+        model_name: Optional[str] = None
     ) -> Optional[str]:
         """Select optimal member - non-blocking version"""
         try:
-            return await self._do_select_optimal_member(pool_name, partition, candidate_members)
+            return await self._do_select_optimal_member(pool_name, partition, candidate_members, model_name)
                 
         except Exception as e:
             self.logger.error(f"Select optimal member exception: {e}")
@@ -210,7 +211,8 @@ class Scheduler:
         self,
         pool_name: str,
         partition: str,
-        candidate_members: List[str]
+        candidate_members: List[str],
+        model_name: Optional[str] = None
     ) -> Optional[str]:
         """Execute core logic for selecting optimal member"""
         # Find corresponding Pool
@@ -218,6 +220,13 @@ class Scheduler:
         if not pool:
             self.logger.error(f"Pool not found: {pool_name}:{partition}")
             return None
+        
+        # Validate XInference requirements
+        if pool.engine_type == EngineType.XINFERENCE:
+            if not model_name:
+                self.logger.error(f"Model name is required for XInference pool {pool_name}")
+                return None
+            self.logger.info(f"XInference pool {pool_name} processing request for model: {model_name}")
         
         # Parse candidate members
         candidates = self._parse_candidate_members(candidate_members)
@@ -231,11 +240,24 @@ class Scheduler:
             self.logger.warning(f"No matching candidate members in Pool {pool_name}")
             return None
         
+        # Handle XInference model filtering
+        if pool.engine_type == EngineType.XINFERENCE:
+            # Filter members that have the requested model
+            model_intersection = self._get_xinference_model_intersection(intersection, model_name)
+            if not model_intersection:
+                self.logger.warning(f"No members have model '{model_name}' in XInference Pool {pool_name}")
+                return "no_the_model_name"
+            intersection = model_intersection
+        
         # Apply member threshold filtering using original metrics values
         filtered_members = self._filter_members_by_thresholds(pool, intersection)
         if not filtered_members:
             self.logger.warning(f"All candidate members filtered out by thresholds in Pool {pool_name}")
             return None
+        
+        # Set model-specific scores for XInference from precomputed values
+        if pool.engine_type == EngineType.XINFERENCE:
+            self._set_xinference_scores_for_model(filtered_members, model_name)
         
         # Use weighted random algorithm to select optimal member
         selected_member = self.selector.select(filtered_members)
@@ -294,6 +316,11 @@ class Scheduler:
     
     def _filter_members_by_thresholds(self, pool: Pool, members: List[PoolMember]) -> List[PoolMember]:
         """Filter members based on configured thresholds using original metrics values"""
+        # For XInference, ignore member threshold filtering as specified in requirements
+        if pool.engine_type == EngineType.XINFERENCE:
+            self.logger.debug(f"XInference pool {pool.name}: skipping member threshold filtering")
+            return members
+            
         # If no thresholds are configured, return all members
         if (pool.member_running_req_threshold is None and 
             pool.member_waiting_queue_threshold is None):
@@ -363,7 +390,8 @@ class Scheduler:
                 "port": member.port,
                 "score": member.score,
                 "percent": round(percent, 2),  # Keep 2 decimal places
-                "metrics": member.metrics
+                "metrics": member.metrics,
+                "detected_variant": member.detected_variant  # Detected engine variant (e.g., vllm_ascend, vllm, sglang_xxx)
             }
             status["members"].append(member_info)
         
@@ -388,13 +416,14 @@ class Scheduler:
         pool_name: str,
         partition: str,
         candidate_members: List[str],
-        iterations: int = 100
+        iterations: int = 100,
+        model_name: Optional[str] = None
     ) -> Dict[str, int]:
         """Simulate selection process for testing weighted random algorithm"""
         results = {}
         
         for _ in range(iterations):
-            selected = await self.select_optimal_member(pool_name, partition, candidate_members)
+            selected = await self.select_optimal_member(pool_name, partition, candidate_members, model_name)
             if selected:
                 results[selected] = results.get(selected, 0) + 1
         
@@ -411,7 +440,8 @@ class Scheduler:
         pool_name: str,
         partition: str,
         candidate_members: List[str],
-        iterations: int = 1000
+        iterations: int = 1000,
+        model_name: Optional[str] = None
     ) -> Dict:
         """Advanced probability analysis - detailed analysis of selection accuracy and deviation"""
         import statistics
@@ -440,7 +470,7 @@ class Scheduler:
         detailed_results = []  # Record detailed data for each simulation
         
         for round_num in range(iterations):
-            selected = await self.select_optimal_member(pool_name, partition, candidate_members)
+            selected = await self.select_optimal_member(pool_name, partition, candidate_members, model_name)
             if selected:
                 results[selected] = results.get(selected, 0) + 1
                 detailed_results.append({
@@ -539,4 +569,48 @@ class Scheduler:
             "is_acceptable": quality_grade in ["Excellent", "Good"],
             "recommendations": recommendations,
             "summary": f"Mean deviation {mean_deviation}%, max deviation {max_deviation}%, quality grade: {quality_grade}"
-        } 
+        }
+    
+    def _get_xinference_model_intersection(self, members: List[PoolMember], model_name: str) -> List[PoolMember]:
+        """Get members that have the specified model (XInference)
+        
+        Args:
+            members: List of candidate members
+            model_name: Model name to filter by
+            
+        Returns:
+            List of members that have the specified model
+        """
+        if not model_name:
+            return members
+            
+        model_members = []
+        for member in members:
+            if member.has_model(model_name):
+                model_members.append(member)
+        
+        self.logger.debug(f"XInference model '{model_name}' filtering: {len(model_members)}/{len(members)} members have this model")
+        return model_members
+    
+    def _set_xinference_scores_for_model(self, members: List[PoolMember], model_name: str) -> None:
+        """Set model-specific scores for XInference members from precomputed values
+        
+        Args:
+            members: List of members to set scores for
+            model_name: Model name for score setting
+        """
+        if not model_name:
+            self.logger.warning("Model name is required for XInference score setting")
+            return
+        
+        for member in members:
+            if model_name in member.model_scores:
+                # Use precomputed score for this model
+                member.score = member.model_scores[model_name]
+                self.logger.debug(f"XInference member {member} model '{model_name}': using precomputed score={member.score:.3f}")
+            else:
+                # Member doesn't have this model, set minimal score
+                member.score = 0.001
+                self.logger.debug(f"XInference member {member} does not have model '{model_name}', using minimal score")
+        
+        self.logger.info(f"XInference model-specific scores set for '{model_name}': {len([m for m in members if model_name in m.model_scores])}/{len(members)} members have the model") 

@@ -13,7 +13,7 @@ sys.path.insert(0, str(project_root))
 
 from utils.logger import get_logger
 from utils.exceptions import ScoreCalculationError
-from core.models import Pool, PoolMember
+from core.models import Pool, PoolMember, EngineType
 from config.config_loader import ModeConfig
 
 
@@ -32,6 +32,13 @@ class ScoreCalculator:
         self.logger.info(f"Starting score calculation for Pool {pool.name} with {len(pool.members)} members")
         
         try:
+            # Special handling for XInference engine type
+            if pool.engine_type == EngineType.XINFERENCE:
+                self.logger.info("ALGORITHM_CHECK: XInference engine detected, using throughput_utilization directly")
+                self._calculate_xinference_scores(pool)
+                return
+            
+            # Regular algorithm processing for vLLM/SGLang
             self.logger.info(f"ALGORITHM_CHECK: Using algorithm mode: {mode_config.name}")
             if mode_config.name == "s1":
                 self.logger.info("ALGORITHM_CHECK: Executing S1 algorithm")
@@ -87,6 +94,37 @@ class ScoreCalculator:
             self.logger.error(f"Failed to calculate scores for Pool {pool.name}: {e}")
             raise ScoreCalculationError(f"Failed to calculate scores for Pool {pool.name}: {e}")
     
+    def _calculate_xinference_scores(self, pool: Pool) -> None:
+        """Calculate scores for XInference engine type
+        
+        For XInference, precompute scores for all models based on throughput_utilization.
+        This makes it consistent with other engine types.
+        """
+        total_members = len(pool.members)
+        total_models_processed = 0
+        
+        for member in pool.members:
+            # Clear previous model scores
+            member.model_scores = {}
+            
+            if member.model_metrics:
+                # Precompute scores for all models
+                for model_name, utilization in member.model_metrics.items():
+                    # Convert utilization to score: higher utilization = lower score
+                    score = max(0.001, 1.0 - utilization)
+                    member.model_scores[model_name] = score
+                    total_models_processed += 1
+                
+                self.logger.debug(f"XInference member {member}: precomputed scores for {len(member.model_scores)} models: {[(k, f'{v:.3f}') for k, v in member.model_scores.items()]}")
+            else:
+                self.logger.warning(f"XInference member {member} has no model metrics")
+            
+            # Set default score for member
+            member.score = 0.001
+        
+        self.logger.info(f"XInference score calculation completed for Pool {pool.name}: {total_members} members, {total_models_processed} model scores precomputed")
+
+
     def _calculate_s1_scores(self, pool: Pool, mode_config: ModeConfig) -> None:
         """Calculate scores using S1 algorithm"""
         # Collect metrics from all members

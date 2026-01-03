@@ -13,7 +13,7 @@ An intelligent scheduler for LLM inference gateway, designed to work with F5 LTM
 ## Features
 
 - **Intelligent Scheduling Algorithm**: S1,S2. Based on different LLM server metrics
-- **Multi-Engine Support**: Supports vLLM and SGLang inference engines
+- **Multi-Engine Support**: Supports vLLM and SGLang inference engines, including variants (e.g., vllm_ascend, vllm_musa, vllm-mlu)
 - **Real-time Monitoring**: Automatically fetches F5 Pool members and inference engine performance metrics
 - **High Availability Design**: Asynchronous architecture with concurrent processing support
 - **RESTful API**: Provides standard HTTP interfaces
@@ -302,7 +302,8 @@ none
       "metrics": {
         "waiting_queue": 2.0,
         "cache_usage": 0.3
-      }
+      },
+      "detected_variant": "vllm_ascend"
     },
     {
       "ip": "10.10.10.10",
@@ -311,7 +312,8 @@ none
       "metrics": {
         "waiting_queue": 1.5,
         "cache_usage": 0.25
-      }
+      },
+      "detected_variant": "vllm"
     }
   ]
 }
@@ -527,6 +529,20 @@ none
 | `metric_user` | String | No | null | Username for Metrics service |
 | `metric_pwd_env` | String | No | null | Environment variable name for Metrics service password |
 
+### Engine Variants Configuration (engines_metrics_keys)
+
+| Config Item | Type | Required | Default | Description |
+|-------------|------|----------|---------|-------------|
+| `{variant_name}` | Object | No | null | Variant configuration block (e.g., `vllm_ascend`, `vllm_musa`, `sglang_xxx`) |
+| `{variant_name}.waiting_queue` | String | No | null | Custom waiting queue metric key |
+| `{variant_name}.cache_usage` | String | No | null | Custom cache usage metric key |
+| `{variant_name}.running_req` | String | No | null | Custom running requests metric key |
+
+**Notes**:
+- Variant names must start with `vllm` or `sglang`
+- All metric keys within a variant are optional; unconfigured keys use built-in defaults
+- The scheduler automatically detects which variant each member uses based on available metrics
+
 ### Configuration Example
 
 ```yaml
@@ -586,6 +602,18 @@ pools:
       port: 9090               # Use unified metrics port
       path: /custom/metrics
       timeout: 5
+
+# Engine variants metrics keys configuration (optional)
+# Use this to support vLLM/SGLang variants with different metrics key names
+engines_metrics_keys:
+  vllm_ascend:                 # Huawei Ascend variant
+    waiting_queue: vllm:num_requests_waiting
+    cache_usage: vllm:kv_cache_usage_perc  # Ascend uses kv_cache instead of gpu_cache
+    running_req: vllm:num_requests_running
+  vllm_musa:                   # Moore Threads variant
+    cache_usage: vllm:gpu_cache_usage_perc
+  vllm-mlu:                    # Cambricon variant  
+    cache_usage: vllm:mlu_cache_usage_perc
 ```
 
 ## Algorithm Description
@@ -602,15 +630,46 @@ Weighted random selection based on each member's Score value:
 
 ### Supported Metrics by Inference Engine
 
-**vLLM Engine**:
+**vLLM Engine** (standard):
 - `vllm:num_requests_waiting`: Number of requests waiting in queue
 - `vllm:gpu_cache_usage_perc`: GPU cache usage percentage
 - `vllm:num_requests_running`: Number of requests currently running (for S2 algorithm)
 
-**SGLang Engine**:
+**SGLang Engine** (standard):
 - `sglang:num_queue_reqs`: Number of requests in queue
 - `sglang:token_usage`: Token cache usage rate
 - `sglang:num_running_reqs`: Number of requests currently running (for S2 algorithm)
+
+### Engine Variants Support
+
+For vLLM and SGLang variants (e.g., vllm_ascend for Huawei Ascend, vllm_musa for Moore Threads, vllm-mlu for Cambricon), the scheduler supports automatic metrics key detection and configuration.
+
+**Configuration**: Use the `engines_metrics_keys` section to define custom metrics keys for each variant:
+
+```yaml
+engines_metrics_keys:
+  vllm_ascend:  # Huawei Ascend variant
+    waiting_queue: vllm:num_requests_waiting
+    cache_usage: vllm:kv_cache_usage_perc  # Different from standard vllm
+    running_req: vllm:num_requests_running
+  vllm_musa:    # Moore Threads variant
+    cache_usage: vllm:gpu_cache_usage_perc
+  vllm-mlu:     # Cambricon variant
+    cache_usage: vllm:mlu_cache_usage_perc
+  sglang_xxx:   # Custom SGLang variant
+    waiting_queue: sglang:num_queue_reqs
+    cache_usage: sglang:token_usage
+```
+
+**Key Points**:
+- **Variant naming**: Must start with `vllm` or `sglang` (underscore or hyphen allowed, e.g., `vllm_ascend`, `vllm-mlu`)
+- **Pool engine_type**: Always use base type (`vllm` or `sglang`) in pool configuration, not the variant name
+- **Optional keys**: Only configure keys that differ from the built-in standard; unconfigured keys fall back to built-in defaults
+- **Priority**: User-configured variant keys are tried first, then fall back to built-in keys
+- **Auto-detection**: The scheduler automatically detects which variant a member is using based on available metrics
+- **Hot reload**: Changes to `engines_metrics_keys` are hot-reloaded and take effect on the next metrics collection cycle
+
+**API Response**: The `/pools/{pool_name}/{partition}/status` endpoint includes a `detected_variant` field for each member, showing which variant was detected (e.g., `vllm_ascend`, `vllm`, `sglang_xxx`)
 
 ## Runtime Monitoring
 
@@ -706,6 +765,21 @@ Normal response:
 
 ### Extending Support for New Inference Engines
 
+**For vLLM/SGLang Variants** (Recommended):
+
+Simply add the variant configuration to `engines_metrics_keys` in the config file:
+```yaml
+engines_metrics_keys:
+  vllm_custom:  # Your custom vLLM variant
+    waiting_queue: vllm:custom_waiting_metric
+    cache_usage: vllm:custom_cache_metric
+    running_req: vllm:custom_running_metric
+```
+
+No code changes required. The scheduler will automatically detect and use the correct keys.
+
+**For Completely New Engine Types**:
+
 1. Add new engine type in `core/models.py`:
 ```python
 class EngineType(Enum):
@@ -714,12 +788,13 @@ class EngineType(Enum):
     NEW_ENGINE = "new_engine"  # Add new engine
 ```
 
-2. Define key metrics in `ENGINE_METRICS`:
+2. Define key metrics in `BASE_ENGINE_METRICS`:
 ```python
-ENGINE_METRICS = {
+BASE_ENGINE_METRICS = {
     EngineType.NEW_ENGINE: {
         "waiting_queue": "new_engine:queue_length",
-        "cache_usage": "new_engine:cache_usage"
+        "cache_usage": "new_engine:cache_usage",
+        "running_req": "new_engine:running_requests"
     }
 }
 ```

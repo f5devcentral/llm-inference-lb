@@ -22,9 +22,9 @@ global:
 
 f5:
   #host: host.docker.internal
-  host: 127.0.0.1
+  host: f5.f5se.io
   port: 8443
-  username: admin
+  username: llmscheduler
   # Environment variable for password, program needs to read environment variable and replace the value here
   password_env: F5_PASSWORD  
 
@@ -51,7 +51,7 @@ modes:
 pools:
   - name: example_pool1
     partition: Common
-    engine_type: vllm  # Use 'vllm' for all vllm variants, configure specific keys in engines_metrics_keys section
+    engine_type: xinference
     fallback:
       pool_fallback: false  # Pool level fallback switch, default is false. If true, API will return "fallback" directly
       member_running_req_threshold: 100  # Running request threshold for member filtering (optional)，it is the any one logic between member_running_req_threshold and member_waiting_queue_threshold
@@ -59,11 +59,22 @@ pools:
     metrics:
       schema: http
       #port: 5001
-      path: /metrics
+      path: /v1/cluster/load-statistics
       timeout: 4  # HTTP request timeout (seconds)
       APIkey: abcdefdfdsfds
       metric_user: user1
       metric_pwd_env: METRIC_PWD
+    model_APIkey: #currently onlyusing for xinference engine type
+      path: /v1/cluster/authorizations
+      f5datagroup: xinfer-datagroup
+      timeout: 4
+      api_key_sync_interval: 5  # API key sync interval in seconds
+      APIkey: abcdefdfdsfds
+      apikey_user: user1
+      apikey_pwd_env: APIKeyServer_PWD
+      failure_mode: "preserve"
+      max_failures_threshold: 10 # and logic with failure_timeout_hours
+      failure_timeout_hours: 2.0 # and logic with max_failures_threshold
   - name: example_pool2
     partition: Common
     engine_type: sglang
@@ -79,21 +90,3 @@ pools:
       APIkey: abcdef
       metric_user: user1
       metric_pwd_env: METRIC_PWD
-
-engines_metrics_keys:
-  vllm_ascend: #specific setting for huawei，set it if you are using huawei ascend
-    waiting_queue: vllm:num_requests_waiting
-    cache_usage: vllm:kv_cache_usage_perc
-    running_req: vllm:num_requests_running
-  #vllm_musa: #specific setting for MUSA,set it if you are using Moore Threads
-    #waiting_queue: vllm:num_requests_waiting
-    #cache_usage: vllm:gpu_cache_usage_perc
-    #running_req: vllm:num_requests_running
-  #vllm-mlu: #specific setting for MLU,set it if you are using cambricon
-    #waiting_queue: vllm:num_requests_waiting
-    #cache_usage: vllm:gpu_cache_usage_perc
-    #running_req: vllm:num_requests_running
-  #sglang_xxx: #default value for sglang_xxx variant
-    #waiting_queue: sglang:num_queue_reqs
-    #cache_usage: sglang:token_usage
-    #running_req: sglang:num_running_reqs
