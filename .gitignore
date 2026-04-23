@@ -19,3 +19,7 @@ tests/*.log
 scheduler.log
 **/scheduler.log
 docs/local-docs/
+
+*.zip
+*.tar
+*.tar.gz
