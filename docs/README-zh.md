@@ -528,8 +528,9 @@ none
 | `{变种名称}.running_req` | 字符串 | 否 | null | 自定义运行请求数指标key |
 
 **说明**：
-- 变种名称必须以`vllm`或`sglang`开头
+- 变种名称必须以`vllm`或`sglang`开头，这里指的是变种引擎名称，非变种key名的要求
 - 变种内的所有指标key均为可选，未配置的使用内置默认值
+- 变种配置的方法是pools下的`engine_type`配置为vllm或sglang这类主名，然后在配置文件最下方配置`engines_metrics_keys`变种的key
 - 调度器根据可用的metrics自动检测每个member使用的变种
 
 ### 配置示例
