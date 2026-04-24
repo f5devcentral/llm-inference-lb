@@ -81,10 +81,14 @@ pools:
       metric_pwd_env: METRIC_PWD
 
 engines_metrics_keys:
-  vllm_ascend: #specific setting for huawei，set it if you are using huawei ascend
-    waiting_queue: vllm:num_requests_waiting
-    cache_usage: vllm:kv_cache_usage_perc
-    running_req: vllm:num_requests_running
+  #vllm_ascend: #specific setting for huawei，set it if you are using huawei ascend
+    #waiting_queue: vllm:num_requests_waiting
+    #cache_usage: vllm:kv_cache_usage_perc
+    #running_req: vllm:num_requests_running
+  vllm_mindie:
+    waiting_queue: num_requests_waiting
+    cache_usage: npu_cache_usage_perc
+    running_req: num_requests_running
   #vllm_musa: #specific setting for MUSA,set it if you are using Moore Threads
     #waiting_queue: vllm:num_requests_waiting
     #cache_usage: vllm:gpu_cache_usage_perc

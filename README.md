@@ -72,7 +72,7 @@ scheduler-project/
 
 ### 1. Environment Requirements
 
-- Python 3.8+
+- Python 3.10+
 - F5 LTM device access permissions
 - Inference engine services (vLLM or SGLang)
 
@@ -124,9 +124,25 @@ pools:
       member_waiting_queue_threshold: 15.0  # Waiting queue threshold
     metrics:
       schema: http              # Protocol type
+      #port: 5001								# when metrics port is different to the port of F5 pool members
       path: /metrics            # Metrics path
       timeout: 4                # Request timeout
+# Engine variants metrics keys configuration (optional)
+# Use this to support vLLM/SGLang variants with different metrics key names
+engines_metrics_keys:
+  vllm_ascend:                 # Huawei Ascend variant
+    waiting_queue: vllm:num_requests_waiting
+    cache_usage: vllm:kv_cache_usage_perc  # Ascend uses kv_cache instead of gpu_cache
+    running_req: vllm:num_requests_running
+  vllm_musa:                   # Moore Threads variant
+    cache_usage: vllm:gpu_cache_usage_perc
+  vllm-mlu:                    # Cambricon variant  
+    cache_usage: vllm:mlu_cache_usage_perc
 ```
+
+> Known Issue 1: 
+>
+> When configuring the specified port under metrics, it means that the scheduler no longer uses the port in the F5 Pool members. Since the configuration file only allows the definition of one port at this time, if the IP in the F5 Pool members is also the same IP, This will cause the scheduler to obtain metrics for different pool members with the same IP and the same port, which will cause problems. Therefore, if the metrics port needs to be specified, the IP in the pool member of F5 must be different.
 
 ### 4. Set Environment Variables
 

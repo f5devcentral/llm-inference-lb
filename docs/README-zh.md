@@ -64,7 +64,7 @@ scheduler-project/
 
 ### 1. 环境要求
 
-- Python 3.8+
+- Python 3.10+
 - F5 LTM设备访问权限
 - 推理引擎服务（vLLM或SGLang）
 
@@ -116,9 +116,25 @@ pools:
       member_waiting_queue_threshold: 15.0  # 等待队列长度阈值
     metrics:
       schema: http              # 协议类型
+      #port: 5001								#指定metrics端口，意味着不使用F5 pool member里的端口。注意下面已知问题1描述
       path: /metrics            # Metrics路径
       timeout: 4                # 请求超时时间
+# 变种引擎key映射，先配主引擎为vllm或sglang，变种引擎名必须以vllm或sglang开头 (optional)
+# Use this to support vLLM/SGLang variants with different metrics key names
+engines_metrics_keys:
+  vllm_ascend:                 # Huawei Ascend variant
+    waiting_queue: vllm:num_requests_waiting
+    cache_usage: vllm:kv_cache_usage_perc  # Ascend uses kv_cache instead of gpu_cache
+    running_req: vllm:num_requests_running
+  vllm_musa:                   # Moore Threads variant
+    cache_usage: vllm:gpu_cache_usage_perc
+  vllm-mlu:                    # Cambricon variant  
+    cache_usage: vllm:mlu_cache_usage_perc
 ```
+
+> 已知问题1注意事项：
+>
+> 当在metrics下配置指定的端口时候，意味着调度器不再使用F5 Pool members里的端口，由于配置文件仅容许定义一个端口，此时如果F5 Pool member里的IP也是相同IP的话，将导致调度器为不同的pool members去获取metrics都变成了相同IP+相同端口，会造成问题。因此如果需要指定metrics端口，那么F5的pool member里的IP必须不同。
 
 ### 4. 设置环境变量
 
